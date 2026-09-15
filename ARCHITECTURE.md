@@ -369,7 +369,3 @@ produce an artifact the already-proven replay engine can execute.
 
 Correctness and evals outrank UI polish at every step.
 
----
-
-ARCHITECTURE FROZEN
-READY FOR CLAUDE CODE
