@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Member Not Found - LegacyBank Operations Console{% endblock %}
+{% block content %}
+<h1>Member Not Found</h1>
+<p role="alert"><b>No member found for {{ member_id }}.</b></p>
+<p>Check the member number and try again.</p>
+<p><a href="{{ url_for('bank.search') }}">Back to Member Search</a></p>
+{% endblock %}

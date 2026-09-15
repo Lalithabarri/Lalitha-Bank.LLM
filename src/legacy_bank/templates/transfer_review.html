@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Review Transfer - Member {{ member.member_id }} - LegacyBank Operations Console{% endblock %}
+{% block content %}
+<h1>Review Transfer &mdash; Member {{ member.member_id }}</h1>
+<p><b>Please review before confirming. Confirmed transfers are final and cannot be reversed from this console.</b></p>
+<table>
+  <caption>Transfer summary</caption>
+  <tr><th scope="row">Member</th><td>{{ member.member_id }} &mdash; {{ member.full_name }}</td></tr>
+  <tr><th scope="row">From account</th><td>{{ from_label }}</td></tr>
+  <tr><th scope="row">To account</th><td>{{ to_label }}</td></tr>
+  <tr><th scope="row">Amount</th><td>{{ amount_display }}</td></tr>
+</table>
+<form method="post" action="{{ url_for('bank.transfer_confirm', member_id=member.member_id) }}">
+  <input type="hidden" name="from_account" value="{{ from_account }}">
+  <input type="hidden" name="to_account" value="{{ to_account }}">
+  <input type="hidden" name="amount" value="{{ amount }}">
+  <button type="submit">Confirm transfer</button>
+</form>
+<p><a href="{{ url_for('bank.transfer_form', member_id=member.member_id) }}">Cancel and go back</a></p>
+{% endblock %}

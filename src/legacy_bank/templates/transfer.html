@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Transfer Funds - Member {{ member.member_id }} - LegacyBank Operations Console{% endblock %}
+{% block content %}
+<h1>Transfer Funds &mdash; Member {{ member.member_id }}</h1>
+<table>
+  <caption>Current balances</caption>
+  {% for label, balance in account_rows %}
+  <tr><th scope="row">{{ label }}</th><td>{{ balance }}</td></tr>
+  {% endfor %}
+</table>
+{% if error %}
+<p role="alert"><b>{{ error }}</b></p>
+{% endif %}
+<form method="post" action="{{ url_for('bank.transfer_form', member_id=member.member_id) }}">
+  <fieldset>
+    <legend>Transfer details</legend>
+    <table>
+      <tr>
+        <td><label for="from_account">From account</label></td>
+        <td>
+          <select id="from_account" name="from_account">
+            {% for key, label in account_options %}
+            <option value="{{ key }}"{% if key == form.from_account %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td><label for="to_account">To account</label></td>
+        <td>
+          <select id="to_account" name="to_account">
+            {% for key, label in account_options %}
+            <option value="{{ key }}"{% if key == form.to_account %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td><label for="amount">Amount</label></td>
+        <td><input type="text" id="amount" name="amount" value="{{ form.amount or '' }}" size="12"> USD</td>
+      </tr>
+    </table>
+    <button type="submit">Review transfer</button>
+  </fieldset>
+</form>
+<p><a href="{{ url_for('bank.member_detail', member_id=member.member_id) }}">Back to member</a></p>
+{% endblock %}

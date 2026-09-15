@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Member Search - LegacyBank Operations Console{% endblock %}
+{% block content %}
+<h1>Member Search</h1>
+{% if error %}
+<p role="alert"><b>{{ error }}</b></p>
+{% endif %}
+<form method="post" action="{{ url_for('bank.search') }}">
+  <fieldset>
+    <legend>Look up member</legend>
+    <label for="member_id">Member ID</label>
+    <input type="text" id="member_id" name="member_id" value="{{ member_id or '' }}" size="12">
+    <button type="submit">Search</button>
+  </fieldset>
+</form>
+<p>Enter the member number exactly as printed on the account card (e.g. M1001).</p>
+{% endblock %}

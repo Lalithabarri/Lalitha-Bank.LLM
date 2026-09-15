@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}LegacyBank Operations Console{% endblock %}</title>
+<style>
+  body { font-family: "Times New Roman", Times, serif; font-size: 13px; background: #c0c0c0; margin: 0; }
+  header { background: #000080; color: #fff; padding: 4px 8px; font-weight: bold; }
+  nav { background: #e0e0e0; border-bottom: 1px solid #808080; padding: 3px 8px; }
+  nav a { margin-right: 12px; }
+  main { background: #fff; margin: 8px; padding: 8px; border: 1px solid #808080; }
+  h1 { font-size: 16px; margin: 0 0 8px 0; }
+  table { border-collapse: collapse; margin: 6px 0; }
+  th, td { border: 1px solid #808080; padding: 2px 8px; text-align: left; }
+  caption { text-align: left; font-weight: bold; }
+  th[scope="row"] { background: #f0f0f0; font-weight: normal; }
+  fieldset { border: 1px solid #808080; padding: 6px; margin: 0 0 8px 0; display: inline-block; }
+  footer { font-size: 11px; color: #404040; padding: 0 8px 8px 8px; }
+</style>
+</head>
+<body>
+<header>LegacyBank Operations Console &mdash; Member Services v2.3</header>
+<nav aria-label="Main">
+  <a href="{{ url_for('bank.search') }}">Member Search</a>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>LEGACYBANK OPS &middot; TERMINAL {{ request.remote_addr }} &middot; All data on this system is synthetic.</footer>
+</body>
+</html>

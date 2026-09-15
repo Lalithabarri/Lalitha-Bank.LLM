@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Member {{ member.member_id }} - LegacyBank Operations Console{% endblock %}
+{% block content %}
+<h1>Member {{ member.member_id }} &mdash; {{ member.full_name }}</h1>
+<table>
+  <caption>Member profile</caption>
+  <tr><th scope="row">Member ID</th><td>{{ member.member_id }}</td></tr>
+  <tr><th scope="row">Name</th><td>{{ member.full_name }}</td></tr>
+  <tr><th scope="row">Status</th><td>{{ member.status }}</td></tr>
+</table>
+<table>
+  <caption>Accounts</caption>
+  <tr><th scope="col">Account</th><th scope="col">Balance</th></tr>
+  {% for label, balance in account_rows %}
+  <tr><th scope="row">{{ label }}</th><td>{{ balance }}</td></tr>
+  {% endfor %}
+</table>
+<p>
+  <a href="{{ url_for('bank.transfer_form', member_id=member.member_id) }}">Transfer funds</a>
+  &middot;
+  <a href="{{ url_for('bank.search') }}">New search</a>
+</p>
+{% endblock %}
