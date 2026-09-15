@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",
     "flask>=3.0",
+    "playwright>=1.62",
 ]
 
 [project.scripts]
@@ -27,6 +28,9 @@ packages = ["src/cua", "src/legacy_bank"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "browser: drives a real Chromium via Playwright against a live Legacy Bank server",
+]
 
 [tool.ruff]
 target-version = "py312"

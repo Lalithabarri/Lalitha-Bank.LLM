@@ -1,21 +1,26 @@
 # interface-ai-cua
 
-An LLM discovers a legacy-UI workflow **once**, under policy. A deterministic engine replays it
-**forever**, with zero model decisions, a human in the loop where money moves, and evidence for
-every claim.
+An LLM discovers a legacy-UI workflow **once**, under policy. A deterministic engine replays the
+compiled capability with **zero model decisions**. Irreversible actions are designed to require
+human intervention, and every production claim is backed by explicit verification evidence.
 
 Canonical documents: [REQUIREMENTS.md](REQUIREMENTS.md) → [ARCHITECTURE.md](ARCHITECTURE.md) →
 [ENGINEERING_DECISIONS.md](ENGINEERING_DECISIONS.md).
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.12 is installed by uv automatically.
+Requires [uv](https://docs.astral.sh/uv/). The project targets Python 3.12; uv can install a
+managed Python version when needed.
 
 ```sh
 uv sync
+uv run playwright install chromium   # one-time browser download (Chromium only)
 uv run pytest -q
 uv run ruff check src tests
 ```
+
+Browser-driven tests (`-m browser`) skip with an explicit reason if Chromium is not installed.
+Surface feasibility evidence: [SURFACE_FEASIBILITY.md](SURFACE_FEASIBILITY.md).
 
 ## Legacy Bank Operations Console (synthetic target)
 
@@ -26,4 +31,4 @@ uv run legacy-bank --fault-mode ambiguous_savings   # duplicate "Savings" row on
 
 Synthetic members: `M1001`, `M1002` (valid), `M404` (absent). All data is fake and in-memory.
 
-_Full setup, demo path, and evidence documentation arrive with later milestones._
+_Full demo path and evidence documentation arrive with later milestones._

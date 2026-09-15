@@ -1,0 +1,28 @@
+- generic [active] [ref=f4e1]:
+  - banner [ref=f4e2]: LegacyBank Operations Console — Member Services v2.3
+  - navigation "Main" [ref=f4e3]:
+    - link "Member Search" [ref=f4e4] [cursor=pointer]:
+      - /url: /members/search
+  - main [ref=f4e5]:
+    - heading "Review Transfer — Member M1001" [level=1] [ref=f4e6]
+    - paragraph [ref=f4e7]: Please review before confirming. Confirmed transfers are final and cannot be reversed from this console.
+    - table [ref=f4e8]:
+      - caption [ref=f4e9]: Transfer summary
+      - rowgroup [ref=f4e10]:
+        - row [ref=f4e11]:
+          - rowheader "Member" [ref=f4e12]
+          - cell "M1001 — Alice Morgan" [ref=f4e13]
+        - row [ref=f4e14]:
+          - rowheader "From account" [ref=f4e15]
+          - cell "Checking" [ref=f4e16]
+        - row [ref=f4e17]:
+          - rowheader "To account" [ref=f4e18]
+          - cell "Savings" [ref=f4e19]
+        - row [ref=f4e20]:
+          - rowheader "Amount" [ref=f4e21]
+          - cell "$500.00" [ref=f4e22]
+    - button "Confirm transfer" [ref=f4e24]
+    - paragraph [ref=f4e25]:
+      - link "Cancel and go back" [ref=f4e26] [cursor=pointer]:
+        - /url: /members/M1001/transfer
+  - contentinfo [ref=f4e27]: LEGACYBANK OPS · TERMINAL 127.0.0.1 · All data on this system is synthetic.

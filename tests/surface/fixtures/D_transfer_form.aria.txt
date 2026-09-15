@@ -1,0 +1,41 @@
+- generic [active] [ref=f3e1]:
+  - banner [ref=f3e2]: LegacyBank Operations Console — Member Services v2.3
+  - navigation "Main" [ref=f3e3]:
+    - link "Member Search" [ref=f3e4] [cursor=pointer]:
+      - /url: /members/search
+  - main [ref=f3e5]:
+    - heading "Transfer Funds — Member M1001" [level=1] [ref=f3e6]
+    - table [ref=f3e7]:
+      - caption [ref=f3e8]: Current balances
+      - rowgroup [ref=f3e9]:
+        - row [ref=f3e10]:
+          - rowheader "Checking" [ref=f3e11]
+          - cell "$2,340.50" [ref=f3e12]
+        - row [ref=f3e13]:
+          - rowheader "Savings" [ref=f3e14]
+          - cell "$15,275.00" [ref=f3e15]
+    - group "Transfer details" [ref=f3e17]:
+      - table [ref=f3e19]:
+        - rowgroup [ref=f3e20]:
+          - row [ref=f3e21]:
+            - cell "From account" [ref=f3e22]
+            - cell "Checking" [ref=f3e23]:
+              - combobox "From account" [ref=f3e24]:
+                - option "Checking" [selected]
+                - option "Savings"
+          - row [ref=f3e25]:
+            - cell "To account" [ref=f3e26]
+            - cell "Savings" [ref=f3e27]:
+              - combobox "To account" [ref=f3e28]:
+                - option "Checking"
+                - option "Savings" [selected]
+          - row [ref=f3e29]:
+            - cell "Amount" [ref=f3e30]
+            - cell "USD" [ref=f3e31]:
+              - textbox "Amount" [ref=f3e32]
+              - text: USD
+      - button "Review transfer" [ref=f3e33]
+    - paragraph [ref=f3e34]:
+      - link "Back to member" [ref=f3e35] [cursor=pointer]:
+        - /url: /members/M1001
+  - contentinfo [ref=f3e36]: LEGACYBANK OPS · TERMINAL 127.0.0.1 · All data on this system is synthetic.

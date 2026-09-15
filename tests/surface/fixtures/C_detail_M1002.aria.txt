@@ -1,0 +1,38 @@
+- generic [active] [ref=f2e1]:
+  - banner [ref=f2e2]: LegacyBank Operations Console — Member Services v2.3
+  - navigation "Main" [ref=f2e3]:
+    - link "Member Search" [ref=f2e4] [cursor=pointer]:
+      - /url: /members/search
+  - main [ref=f2e5]:
+    - heading "Member M1002 — Rahul Iyer" [level=1] [ref=f2e6]
+    - table [ref=f2e7]:
+      - caption [ref=f2e8]: Member profile
+      - rowgroup [ref=f2e9]:
+        - row [ref=f2e10]:
+          - rowheader "Member ID" [ref=f2e11]
+          - cell "M1002" [ref=f2e12]
+        - row [ref=f2e13]:
+          - rowheader "Name" [ref=f2e14]
+          - cell "Rahul Iyer" [ref=f2e15]
+        - row [ref=f2e16]:
+          - rowheader "Status" [ref=f2e17]
+          - cell "Active" [ref=f2e18]
+    - table [ref=f2e19]:
+      - caption [ref=f2e20]: Accounts
+      - rowgroup [ref=f2e21]:
+        - row [ref=f2e22]:
+          - columnheader "Account" [ref=f2e23]
+          - columnheader "Balance" [ref=f2e24]
+        - row [ref=f2e25]:
+          - rowheader "Checking" [ref=f2e26]
+          - cell "$980.00" [ref=f2e27]
+        - row [ref=f2e28]:
+          - rowheader "Savings" [ref=f2e29]
+          - cell "$4,120.75" [ref=f2e30]
+    - paragraph [ref=f2e31]:
+      - link "Transfer funds" [ref=f2e32] [cursor=pointer]:
+        - /url: /members/M1002/transfer
+      - text: ·
+      - link "New search" [ref=f2e33] [cursor=pointer]:
+        - /url: /members/search
+  - contentinfo [ref=f2e34]: LEGACYBANK OPS · TERMINAL 127.0.0.1 · All data on this system is synthetic.

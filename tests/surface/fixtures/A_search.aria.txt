@@ -1,0 +1,13 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]: LegacyBank Operations Console — Member Services v2.3
+  - navigation "Main" [ref=e3]:
+    - link "Member Search" [ref=e4] [cursor=pointer]:
+      - /url: /members/search
+  - main [ref=e5]:
+    - heading "Member Search" [level=1] [ref=e6]
+    - group "Look up member" [ref=e8]:
+      - text: Member ID
+      - textbox "Member ID" [ref=e10]
+      - button "Search" [ref=e11]
+    - paragraph [ref=e12]: Enter the member number exactly as printed on the account card (e.g. M1001).
+  - contentinfo [ref=e13]: LEGACYBANK OPS · TERMINAL 127.0.0.1 · All data on this system is synthetic.

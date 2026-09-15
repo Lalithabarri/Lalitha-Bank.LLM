@@ -1,0 +1,41 @@
+- generic [active] [ref=f7e1]:
+  - banner [ref=f7e2]: LegacyBank Operations Console — Member Services v2.3
+  - navigation "Main" [ref=f7e3]:
+    - link "Member Search" [ref=f7e4] [cursor=pointer]:
+      - /url: /members/search
+  - main [ref=f7e5]:
+    - heading "Member M1001 — Alice Morgan" [level=1] [ref=f7e6]
+    - table [ref=f7e7]:
+      - caption [ref=f7e8]: Member profile
+      - rowgroup [ref=f7e9]:
+        - row [ref=f7e10]:
+          - rowheader "Member ID" [ref=f7e11]
+          - cell "M1001" [ref=f7e12]
+        - row [ref=f7e13]:
+          - rowheader "Name" [ref=f7e14]
+          - cell "Alice Morgan" [ref=f7e15]
+        - row [ref=f7e16]:
+          - rowheader "Status" [ref=f7e17]
+          - cell "Active" [ref=f7e18]
+    - table [ref=f7e19]:
+      - caption [ref=f7e20]: Accounts
+      - rowgroup [ref=f7e21]:
+        - row [ref=f7e22]:
+          - columnheader "Account" [ref=f7e23]
+          - columnheader "Balance" [ref=f7e24]
+        - row [ref=f7e25]:
+          - rowheader "Checking" [ref=f7e26]
+          - cell "$2,340.50" [ref=f7e27]
+        - row [ref=f7e28]:
+          - rowheader "Savings" [ref=f7e29]
+          - cell "$15,275.00" [ref=f7e30]
+        - row [ref=f7e31]:
+          - rowheader "Savings" [ref=f7e32]
+          - cell "$250.00" [ref=f7e33]
+    - paragraph [ref=f7e34]:
+      - link "Transfer funds" [ref=f7e35] [cursor=pointer]:
+        - /url: /members/M1001/transfer
+      - text: ·
+      - link "New search" [ref=f7e36] [cursor=pointer]:
+        - /url: /members/search
+  - contentinfo [ref=f7e37]: LEGACYBANK OPS · TERMINAL 127.0.0.1 · All data on this system is synthetic.

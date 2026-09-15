@@ -1,0 +1,14 @@
+- generic [active] [ref=f6e1]:
+  - banner [ref=f6e2]: LegacyBank Operations Console — Member Services v2.3
+  - navigation "Main" [ref=f6e3]:
+    - link "Member Search" [ref=f6e4] [cursor=pointer]:
+      - /url: /members/search
+  - main [ref=f6e5]:
+    - heading "Member Search" [level=1] [ref=f6e6]
+    - alert [ref=f6e7]: No member found for M404.
+    - group "Look up member" [ref=f6e9]:
+      - text: Member ID
+      - textbox "Member ID" [ref=f6e11]: M404
+      - button "Search" [ref=f6e12]
+    - paragraph [ref=f6e13]: Enter the member number exactly as printed on the account card (e.g. M1001).
+  - contentinfo [ref=f6e14]: LEGACYBANK OPS · TERMINAL 127.0.0.1 · All data on this system is synthetic.
