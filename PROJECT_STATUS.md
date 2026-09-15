@@ -12,11 +12,16 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 2 — implemented and verified, awaiting commit.** Surface contract +
-`PlaywrightSurface` + live-browser semantic feasibility (ARCHITECTURE §15 step 3). Evidence in
-[SURFACE_FEASIBILITY.md](SURFACE_FEASIBILITY.md).
+**Milestone 2 — COMPLETE.** Surface contract + `PlaywrightSurface` + live-browser semantic
+feasibility (ARCHITECTURE §15 step 3). Committed as `b0dff2e`, pushed to `origin/main`.
+Playwright 1.62.0; Chromium feasibility states A–G all PASS; no target markup changes required;
+98 tests passed; ruff passed; Playwright imported by exactly one `cua` module; `observe()`
+measured at 2 driver calls; the ambiguity fixture preserved two Savings candidates. Known
+limitations are documented in [SURFACE_FEASIBILITY.md](SURFACE_FEASIBILITY.md).
 
-Milestone 1 is COMPLETE: final verification passed, committed as `362b0f1`, pushed to `main`.
+Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
+
+Active next milestone: **Milestone 3 — Policy-gated deterministic core.**
 
 ## Completed milestones
 
@@ -137,7 +142,8 @@ through a stable, driver-neutral semantic representation, with the driver fully 
   syntax); Chromium only, headless only so far; waiting is `wait_for_load_state()` only
   (bounded declarative waits are step 7); `ACTION_DISPATCHED` not yet emitted (step 9) — the
   `_dispatch()` chokepoint exists.
-- **Git commit:** none yet (awaiting review).
+- **Git commit:** `b0dff2e` — feat: add surface abstraction and Playwright adapter (pushed to
+  `origin/main`).
 - **Presentation/pitch takeaway:** the highest-risk architectural assumption was falsifiable and
   survived: a real browser exposes every control and state of both flows by role + accessible
   name + table context, M404 is an observable `alert`, and the ambiguity fault yields two
@@ -226,6 +232,6 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 
 ## Next milestone
 
-**ARCHITECTURE §15 step 4:** `ActionGate` + allowlist + risk classification + `ControlOwner`
-basics — the single authorization chokepoint that becomes the only production caller of
-`Surface.act()`.
+**Milestone 3 — Policy-gated deterministic core.** Begins at ARCHITECTURE §15 step 4:
+`ActionGate` + allowlist + risk classification + `ControlOwner` basics — the single authorization
+chokepoint that becomes the only production caller of `Surface.act()`.
