@@ -12,21 +12,27 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 4 — COMPLETE: deterministic replay core.** `TargetResolver`, binding, closed
-transforms, condition evaluator, `RunResult` with exactly three terminal statuses, `ReplayDeps`
-with no model slot, `ReplayEngine` (ARCHITECTURE §15 step 7) and the step-8 proofs against the
-real Legacy Bank in real Chromium using the unmodified checked-in artifact: M1001 →
-`Decimal("15275.00")`, M1002 → `Decimal("4120.75")`, M404 → BUSINESS_OUTCOME/MEMBER_NOT_FOUND,
-`ambiguous_savings` → FAILURE/AMBIGUOUS_TARGET with the READ never dispatched, policy denial →
-FAILURE/POLICY_DENIED with zero dispatches, zero-model replay in a fresh interpreter under an
-import guard. 429 tests passed (25 real-Chromium); ruff clean; no new dependency. Committed as
-`2386eab`, pushed to `origin/main`.
+**Milestone 5 — COMPLETE: evidence + redaction foundation.**
+Typed, versioned `EvidenceEvent` envelope (vocabulary 1.0: RUN_STARTED, GATE_DECISION,
+ACTION_DISPATCHED, ACTION_COMPLETED, ACTION_FAILED, BUSINESS_OUTCOME, RUN_COMPLETED, RUN_FAILED);
+deterministic `Redactor` (key / URL / ref / known-value rules); append-only, fsync-per-event
+`JsonlEvidenceWriter` behind `EvidenceStore`'s `evidence/<run_kind>/<run_id>/events.jsonl`
+layout; `EvidenceRecorder` as the one object the Surface (`DispatchListener`), the ActionGate
+(`GateObserver`) and the engine (`ReplayDeps.evidence`) share. `ACTION_DISPATCHED` is persisted
+at the Surface boundary immediately before the driver call. Evidence failure is its own domain
+(`FailureCode.EVIDENCE_ERROR`), fails closed, never repeats an action, and never writes again for
+that run. Every M4 result is unchanged. 563 tests passed (32 real-Chromium); ruff clean; no new
+dependency. Committed as `70e053e`, pushed to `origin/main`.
 
+Milestone 4 is COMPLETE: committed as `2386eab`, pushed to `origin/main`.
 Milestone 3A is COMPLETE: committed as `057d1d7`, pushed to `origin/main`.
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next milestone: **Milestone 5 — EvidenceWriter + Redactor** (ARCHITECTURE §15 step 9).
+Active next milestone: **Milestone 6 — `LLMClient` + structured action output, then
+`DiscoveryAgent` + normalized trace and the E01 genuine live discovery** (ARCHITECTURE §15 steps
+10–12). Evidence deliberately precedes genuine discovery (step 9 < 10) so that the first real E01
+run is captured, from its first action, by an evidence layer that was already proven on replay.
 
 ## Completed milestones
 
@@ -213,8 +219,9 @@ the step-8 proofs were split into Milestone 4 so the deterministic core gets its
   `git diff --stat` proving M1/M2 source and tests are byte-identical except the extended
   boundary file.
 - **Test/eval results:** 259 passed, 259 collected (M1/M2: legacy_bank 32, domain 6, surface
-  36, boundaries 41 [24 retained + 17 new]; M3 new: policy 65, hitl 6, artifact 73). ruff
-  clean. No E01–E10 evals exist yet.
+  36, boundaries 41 [24 retained + 17 new]; M3 new: policy 60, hitl 6, artifact 78 — the
+  per-directory split was first recorded as 65/73; corrected from `--collect-only` at M5, the
+  total was always right). ruff clean. No E01–E10 evals exist yet.
 - **Bugs or incorrect assumptions discovered:** (1) first cut of `risk.py` imported
   `route_matches` from `config.py`, which imports `RiskRule` from `risk.py` — an import cycle;
   (2) the plan's `ControlOwner` had no way to reach a non-AUTOMATION state until step 16,
@@ -415,6 +422,122 @@ proven with the handwritten artifact before any model exists.
   FailureCode path, error boundary, zero dispatch), `tests/replay/test_zero_model.py` +
   `zero_model_replay.py`, `tests/cua/test_boundaries.py` (M4 section).
 
+### Milestone 5 — Evidence + redaction foundation: envelope · Redactor · JSONL writer · recorder · dispatch chronology
+
+Maps to ARCHITECTURE §15 step 9. Sequenced **before** the LLM client and discovery (steps 10–12)
+on purpose: the non-negotiable E01 run must be captured by an evidence layer that was already
+trusted on deterministic replay, not by one written afterwards around a model run.
+
+- **Goal:** a small, deterministic, *observational* evidence subsystem — trustworthy action
+  chronology with `ACTION_DISPATCHED` as the ground truth at the Surface boundary, redaction
+  before any byte reaches disk, no transient ref / credential / raw input persisted — that
+  records replay today and discovery/HITL later without touching ActionGate authority, Surface
+  semantics, or any M4 result. No screenshots, no Gemini, no compiler, no HITL, no CLI.
+- **Decisions applied:** ARCHITECTURE §3 (`surface/` owns `ACTION_DISPATCHED`), §7 (`ReplayDeps`
+  gains the evidence dependency the architecture already lists), §10 (envelope fields, JSONL,
+  `ACTION_DISPATCHED` immediately before the driver call, `evidence/<kind>/<run_id>/`), §8/D19
+  (redaction before disk, never raw-then-redact; `EvidenceWriter` + `ArtifactStore` are the only
+  disk writers — now asserted structurally), D09 (the gate stays the sole `Surface.act` caller;
+  its observer is a constructor Protocol, never a `dispatch` parameter), D15 (a memory sink
+  yields identical replay results; `import cua.evidence` loads no driver and no SDK).
+  **Session decisions (approved with the plan and its addendum):** `GATE_DECISION` added to the
+  requested minimum vocabulary so a denial is a recorded decision, not just a failure code;
+  `RUN_COMPLETED` is the terminal event for SUCCESS *and* BUSINESS_OUTCOME (a business result is
+  not a crash), `RUN_FAILED` for FAILURE; identifiers persist as deterministic, non-reversible,
+  name-tagged placeholders (`<input:member_id>`) derived from the bound runtime inputs — chosen
+  over removal (evidence stays readable) and partial masking (leaks); secret-shaped keys become
+  the literal `[REDACTED]`, never a digest; URL userinfo/query values/fragment stripped with query
+  keys kept; ref tokens rewritten to `<ref>` as defence in depth behind the structural guarantee
+  that no payload model has a ref field; `EvidenceError` is its own failure domain →
+  `FailureCode.EVIDENCE_ERROR`, fail closed, one failure per run, never a second write, never a
+  redispatch; envelope fields are system-generated so only the payload is redacted;
+  screenshots explicitly deferred to the HITL milestone (pixel redaction cannot be guaranteed;
+  the failure event's redacted observation summary is the M5 richer signal).
+- **What was implemented:** `cua/evidence/{events,redaction,writer,recorder}.py` (+ exports);
+  `surface/contract.py` `DispatchRecord` / `DispatchListener` / `NullDispatchListener`;
+  `PlaywrightSurface(listener=…)` with the exact order *resolve ref → on_dispatched → counter +
+  ref invalidation → driver op → on_completed | on_failed*; `ActionGate(…, observer=…)` notifying
+  in `dispatch()` after `authorize`, before `act`; `replay/summaries.py` (RunResult → evidence
+  payloads, so `evidence` never imports `replay`); `ReplayEngine` brackets the run, stamps the
+  step context, maps `EvidenceError`, derives `dispatched` on the surface-error path from the
+  recorder's ground truth (an `UnknownRefError` inside `act()` is no longer recorded as
+  dispatched), and fails loudly (`RuntimeError`) if a dispatched step has no `ACTION_DISPATCHED`
+  behind it (a surface not wired to the run's recorder); `FailureCode.EVIDENCE_ERROR`;
+  `domain/ids.new_event_id`. Tests: `tests/evidence/` (events, redaction, writer, recorder,
+  memory sink), M5 sections in the surface, gate, engine, live, zero-model and boundary suites;
+  `conftest` `evidence_store` / `evidence_recorder` / `recorded_surface` fixtures;
+  `zero_model_replay.py --evidence-root`. `evidence/README.md` + four sample replay runs written
+  through the `CUA_EVIDENCE_ROOT` opt-in (M2's dump precedent). `legacy_bank/`, `capabilities/`,
+  `policy/`, `pyproject.toml`, `uv.lock` untouched.
+- **Actual verification performed:** `uv run pytest -q` (563 passed, 11.1 s); `uv run pytest -m
+  browser -q` (32 passed); `ruff check` + `ruff format --check` (90 files); grep for `.act(` in
+  `src/cua` (one code call: `policy/action_gate.py:154`); grep for broad `except` in
+  `evidence/ replay/ policy/ surface/` (none); `git diff --stat -- pyproject.toml uv.lock
+  src/legacy_bank capabilities policy` (empty); fresh-interpreter zero-model replay with the real
+  JSONL writer under the import guard (scripted and live): 14 events, no member id in the file;
+  scan of `evidence/replay/*/events.jsonl` for `M1001|M1002|M404`, a `"ref"` key, or a ref-shaped
+  token (none; every line `redaction_applied: true`).
+- **Test/eval results:** 563 passed, 563 collected (M1–M4 429 unchanged except the two
+  `ReplayDeps` field-set assertions and the `FailureCode` vocabulary test; new 134: evidence 91 =
+  events 8, redaction 58, writer 10, recorder 15; surface +7 = 24 browser; policy +6 = 43 gate;
+  engine +18 = 43; boundaries +12 = 67; live and zero-model extended in place). Live proofs L1–L8
+  now also assert the on-disk chronology (`[RUN_STARTED, (GATE, DISPATCHED, COMPLETED)×4,
+  RUN_COMPLETED]`, seq 1..14, session id on every line, `<input:member_id>` in place of the id).
+  No E01–E10 eval scripts exist yet; E10's mechanism (a known runtime value injected into inputs,
+  URLs and error text never surviving in persisted JSONL) is exercised in
+  `test_engine.py::test_a_sentinel_runtime_input_is_redacted_from_urls_alerts_and_error_text`.
+- **Bugs or incorrect assumptions discovered:** (1) the first `Redactor` walked Pydantic models
+  only at the top level — a model nested in a dict was refused (`TypeError`); fixed to dump at
+  any depth. (2) A first M5 test asserted `RecordingSurface.acts == []` for "evidence refused
+  before the driver" — wrong instrument: the wrapper records the gate's call, the driver-attempt
+  counter is `dispatched_actions`; the test now asserts the gate asked once, the counter stayed
+  0, and the page never changed. (3) M4's engine marked *every* surface runtime error inside
+  `act()` as `dispatched=True`; an `UnknownRefError` (raised before the driver op) was therefore
+  mis-recorded — now taken from the recorder's ground truth. No production defect was found by
+  the live proofs; every browser test passed on the first run.
+- **Fixes made:** the three above; two E501 wraps.
+- **Remaining limitations:** no screenshots (deferred with the seam named:
+  `Surface.capture_screenshot` + an `ARTIFACT_CAPTURED` event, failure + HITL pre/post only);
+  no `OBSERVATION` / `STEP_*` / discovery / HITL events (each is a `schema_version` bump);
+  derived PII in observed prose (a member's name in a heading) is not detected — synthetic data;
+  sensitivity is not declared on artifact inputs/outputs; the ref-token rule is heuristic (the
+  structural guarantee is the real one); `RunKind` has only `REPLAY`; the M4 note that "no
+  `evidence/` directory exists yet" is superseded — four sample runs + README now exist but the
+  directory is not yet referenced by a demo command (no CLI); `INTERVENTION_REQUIRED` still ends
+  the run rather than suspending it.
+- **Git commit:** `70e053e` — feat: add evidence writer, redactor, and dispatch chronology
+  (Milestone 5) (pushed to `origin/main`). Freeze audit before the commit: the approved evidence
+  audit (no member id, no `"ref"` key, no ref-shaped token, every line `redaction_applied`, schema
+  round-trip, `seq` contiguous) passed on all four sample runs; an additional name scan found the
+  synthetic seed name `Alice Morgan` (`legacy_bank/data.py`, D01) in the ambiguity run's
+  `failure.observed.outline_excerpt` with the member id already redacted — exactly the documented
+  V1 limit (derived text in observed prose is not detected; target data is synthetic), recorded
+  here rather than silently passed. `.envrc` added to `.gitignore` in the same commit.
+- **Presentation/pitch takeaway:** every automated action now has a durable, ordered, redacted
+  trail whose ground truth is written by the surface *before* the driver is touched — and a run
+  that cannot write that trail stops rather than acting unrecorded, without ever repeating an
+  action. The evidence layer has no authority: a memory sink produces byte-identical replay
+  decisions, and neither the gate nor the surface can be reached by it.
+
+#### Reviewer / benchmark signal
+
+- **Assignment signal:** a structured log of what the agent did and why (REQUIREMENTS §7), secrets
+  and PII never persisted (§6), and the replay-run evidence half of `/evidence/` (§10) — with a
+  richer failure signal (redacted observation summary + candidates) pending screenshots.
+- **Reference-project lesson applied:** put the "did an action occur" record at the last
+  boundary before the driver, not in the caller; make evidence observational and fail closed so
+  it can never become a second authority or a reason to repeat a financial action.
+- **What our implementation improves/clarifies:** one recorder object is the only thing the
+  surface, the gate and the engine share; redaction is a property of the persistence boundary
+  (the in-memory result stays debuggable); evidence failure has its own code and its own
+  before/after-dispatch semantics.
+- **Proof:** `tests/evidence/*`, `tests/surface/test_playwright_surface.py` (M5 section: order,
+  refusal before/after the driver, dead port counts as dispatched), `tests/policy/test_action_gate.py`
+  (observer before `act`, refusal prevents dispatch, `dispatch` signature unchanged),
+  `tests/replay/test_engine.py` (chronologies, every evidence-failure row, sentinel),
+  `tests/replay/test_replay_live.py` (on-disk chronology in real Chromium),
+  `tests/cua/test_boundaries.py` (M5 section), `evidence/replay/*/events.jsonl`.
+
 ## Decision corrections worth explaining
 
 | Initially proposed | Corrected to | Why it matters |
@@ -422,7 +545,7 @@ proven with the handwritten artifact before any model exists.
 | Implement the full enum vocabulary (`FailureCode`, `GateDecision`, `TerminalStatus`, `ControlOwnerState`, …) in Milestone 1 as "shared vocabulary" | Only `ActionType`, `SurfaceElement`, `SurfaceSnapshot` now; everything else is defined in its owning module at its own milestone | Freezing runtime semantics before the code that exercises them exists invites churn and silently pre-decides later milestones. Empty, docstring-only locations preserve the architecture without that risk. |
 | `FailureCode` listed `DEAD_END` and `MODEL_ERROR` | Those belong to `StopReason` (discovery); `FailureCode` (replay) must not include them | Discovery stop reasons and replay failure codes are different vocabularies; mixing them would blur the discovery/replay boundary the whole design rests on. Forward note — `FailureCode` is not built yet. |
 | Plan's route table once showed "No member found for ." | Implementation always renders the requested id: "No member found for M404." | The not-found text is a business-outcome detector input; it must be stable and carry the id. |
-| `.gitignore` as one of several scaffold files | `.gitignore` with `.env` excluded written **before** any other file | A real Gemini credential exists locally; the first commit must be incapable of tracking it. |
+| `.gitignore` as one of several scaffold files | `.gitignore` with `.env` excluded written **before** any other file | A real Gemini smoke test was completed before Bundle B (D06); credential availability is runtime/environment-specific and no credential is committed, so the first commit had to be incapable of tracking one. (Reworded at M5: the earlier wording claimed a credential "exists locally", which is not a property of the repository.) |
 | Resolve observation refs with an `aria-ref=…` selector found in Playwright's source | Internal observation-local map `ref → (role, name, ordinal)` resolved through documented `get_by_role().nth()`; refs never leave the snapshot | Undocumented selector syntax is not a contract; durable targeting must rest on documented, accessibility-shaped queries (D13). |
 | Fill `tag_hint` via one `evaluate_all` per role on every `observe()`, `None` on order mismatch | `tag_hint` stays `None` in V1; `observe()` is 2 driver calls | No consumer needs it; per-role round trips sit inside the future discovery loop; a silent fallback is the guessing pattern the design forbids. |
 | Reusable `PlaywrightSurface` (reopen after close) | Single-use: `close()` forgets `session_id`; `open()` afterwards raises | `session_id` is the proof mechanism for the same-session HITL invariant (H1); a stale or recycled id would make that proof meaningless. |
@@ -441,6 +564,12 @@ proven with the handwritten artifact before any model exists.
 | Partial READ outputs kept on FAILURE "for debugging" | `outputs == {}` on BUSINESS_OUTCOME and FAILURE | A caller must never mistake a value read before a failed checkpoint for a trustworthy capability output. |
 | Zero-model proof as an in-process import guard | Fresh-interpreter subprocess with the guard installed before any `cua` import (plus the structural tests) | Modules already imported by the test process would make an in-process guard vacuous. |
 | `KnownOutcome.terminal_status` "becomes `replay.TerminalStatus`" | Stays a string literal; agreement asserted by a test | `artifact/` importing `replay/` would invert the dependency direction (`replay -> artifact`). |
+| Record `GATE_DECISION` from the engine after `gate.dispatch()` returns | An abstract `GateObserver` notified inside `dispatch()` after `authorize`, before `act` | Recording afterwards would place the decision *after* `ACTION_COMPLETED` in the chronology, which reads as "dispatched before authorised"; authorising twice to record first would be wasteful and let the recorded decision differ from the acted-on one. The observer cannot alter the result and is not a `dispatch` parameter. |
+| Count an action as dispatched, then notify evidence | Notify (`on_dispatched`) first; only on success increment `dispatched_actions`, invalidate refs, call the driver | An action must count as attempted only once its attempt is durable; a refused notice must leave the surface untouched. A dead port after a recorded notice still counts (M4 invariant kept). |
+| Evidence failure surfaced as a flag on an otherwise successful result | `FAILURE / EVIDENCE_ERROR`, outputs dropped, one failure per run, no second write, no redispatch | "You own the proof": a run whose proof cannot be written is not proven; and an evidence failure must never become a reason to act again, nor recurse into writing about itself. |
+| Redact the whole event | Redact the `payload` only | Envelope fields are system-generated identifiers and enums; rewriting them could corrupt the chronology key or the discriminator on an absurd input, while all observed text lives in the payload. |
+| Engine marks every surface runtime error inside `act()` as `dispatched=True` (M4) | `dispatched` taken from the recorder's dispatch count on that path | `UnknownRefError` and a failing locator query happen *before* the driver op; the recorder is the ground truth for whether the boundary was crossed. |
+| Persist identifiers masked (`M1***`) or removed | Deterministic name-tagged placeholders (`<input:member_id>`) from the bound runtime inputs | Masking leaks; removal makes routes and alerts unreadable; the placeholder is non-reversible, deterministic, and keeps evidence useful. Unknown secrets in arbitrary prose remain a documented V1 limit rather than an implied DLP capability. |
 
 ## Evidence produced
 
@@ -489,8 +618,22 @@ proven with the handwritten artifact before any model exists.
 | Outputs are authoritative only on SUCCESS: a READ value is discarded when the final checkpoint fails | `test_engine.py::test_checkpoint_failure_discards_the_partial_output`, `test_result.py::test_failure_requires_failure_and_empty_outputs` |
 | Unbound placeholders are errors; route placeholders bind to exactly one segment; external/malformed routes are rejected before any dispatch; base URL is origin-only | `tests/replay/test_binding.py` |
 | `route_matches` evaluates the decoded observed path literally; `value_equals` needs exactly one target; checkpoint is ALL-in-order with short-circuit | `tests/replay/test_conditions.py` |
+| `ACTION_DISPATCHED` is notified before the driver call; a refusal leaves `dispatched_actions`, the refs and the page untouched; a dead port after a recorded notice counts as dispatched and is followed by `ACTION_FAILED` | `tests/surface/test_playwright_surface.py::test_action_dispatched_precedes_the_driver_call_and_a_refusal_leaves_no_trace`, `::test_refusal_before_a_fill_leaves_the_field_and_the_refs_untouched`, `::test_driver_failure_after_a_recorded_dispatch_is_dispatched_then_failed` |
+| A refusal after the driver call propagates (the action happened); `UnknownRefError` produces no dispatch notice; the record carries no ref | `::test_refusal_after_the_driver_call_propagates_and_the_action_did_happen`, `::test_refusal_on_failed_carries_the_driver_error_as_context`, `::test_unknown_ref_produces_no_dispatch_notification`, `::test_successful_action_is_dispatched_then_completed_with_no_ref_in_the_record` |
+| The gate notifies its observer once per `dispatch`, after `authorize`, before `act`; a refusing observer prevents the dispatch; `authorize` alone does not notify; `dispatch` has no observer parameter | `tests/policy/test_action_gate.py::test_observer_sees_each_dispatch_decision_once_before_any_act[*]`, `::test_a_refusing_observer_prevents_the_dispatch`, `::test_authorize_alone_does_not_notify_and_the_observer_cannot_change_the_decision`, `::test_the_observer_is_a_constructor_dependency_with_a_null_default` |
+| M1001 leaves `[RUN_STARTED, (GATE ALLOW, DISPATCHED, COMPLETED)×4, RUN_COMPLETED]`, seq 1..14, step context on every action event; M404 ends `BUSINESS_OUTCOME, RUN_COMPLETED(status BUSINESS_OUTCOME)` | `tests/replay/test_engine.py::test_m1001_produces_a_coherent_evidence_chronology`, `::test_m404_produces_business_outcome_evidence_and_a_completed_run`, `tests/replay/test_replay_live.py::test_success_reads_the_savings_balance[*]`, `::test_m404_is_member_not_found_business_outcome` |
+| Policy denial / REQUIRE_INTERVENTION evidence is `GATE_DECISION` + `RUN_FAILED` with zero `ACTION_DISPATCHED`; ambiguity has no READ dispatch and lists candidates without refs; a driver failure is `DISPATCHED, FAILED` | `test_engine.py::test_policy_denial_evidence_is_a_decision_without_any_dispatch`, `::test_require_intervention_evidence_is_a_decision_without_any_dispatch`, `::test_ambiguity_evidence_has_no_read_dispatch_and_candidates_without_refs`, `::test_driver_failure_evidence_is_dispatched_then_failed`, live L4/L5a/L8 |
+| Evidence failure before the driver call → `EVIDENCE_ERROR`, `dispatched=False`, driver-attempt counter 0, page unchanged; after → `dispatched=True`, exactly one attempt, never repeated; on `begin_run` → zero observations; on the terminal write → SUCCESS becomes `EVIDENCE_ERROR` with outputs dropped; nothing is written after the first failure | `test_engine.py::test_evidence_failure_before_the_driver_call_means_the_action_was_not_attempted`, `::test_gate_decision_write_failure_stops_before_the_surface_is_touched`, `::test_evidence_failure_after_the_driver_call_means_attempted_and_never_repeated`, `::test_evidence_failure_after_a_driver_failure_names_both`, `::test_evidence_failure_on_begin_run_fails_before_any_observation`, `::test_terminal_write_failure_turns_success_into_evidence_error_with_outputs_dropped`, `tests/evidence/test_recorder.py::test_after_the_first_failure_nothing_more_is_written_and_every_write_is_refused` |
+| `EvidenceError` is never relabelled as a surface or policy failure; a surface not wired to the recorder fails loudly on the first action | `test_engine.py::test_evidence_error_is_never_relabelled_as_a_surface_or_policy_failure`, `::test_a_surface_not_wired_to_the_recorder_fails_loudly_on_the_first_action` |
+| A known runtime value (sentinel member id) never survives in persisted evidence — not in the FILL echo, URLs, alert text, or a driver error message that also carries a URL query and a ref | `test_engine.py::test_a_sentinel_runtime_input_is_redacted_from_urls_alerts_and_error_text`, `::test_no_ref_and_no_member_id_survive_in_persisted_evidence` |
+| Redaction rules: every listed key and suffix, case/separator-insensitive, whole subtree, look-alikes untouched; URL userinfo/query values/fragment; ref tokens vs identifiers; longest value first; short-value guard; idempotent, deterministic, no digest; unsupported types refused | `tests/evidence/test_redaction.py` (58 cases) |
+| Redacted bytes only ever reach disk; one JSON object per line, flushed per event; a run file is never overwritten; append/open/serialise failures are `EvidenceError` with the cause chained; malformed or unredacted lines fail loudly on read | `tests/evidence/test_writer.py` |
+| `seq` strictly increasing; step context stamped and cleared; `dispatch_count` increments only after the `ACTION_DISPATCHED` write succeeded; terminal events close the run; events outside a run are refused | `tests/evidence/test_recorder.py` |
+| Disk writes exist only in `artifact/store.py` and `evidence/writer.py`; `cua.evidence` reaches neither Playwright nor an LLM layer nor `cua.replay`; no payload model has a ref/element/snapshot field; the listener/observer protocols live below evidence (no cycle) | `tests/cua/test_boundaries.py` (M5 section) |
+| The real JSONL writer runs in the zero-model fresh interpreter (scripted and live) with no forbidden module loaded and no member id in the file | `tests/replay/test_zero_model.py`, `test_replay_live.py::test_zero_model_live_replay_in_a_fresh_interpreter` |
 
-No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
+`evidence/` now holds `README.md` and four sample replay runs (L1 SUCCESS, L3 BUSINESS_OUTCOME, L4
+AMBIGUOUS_TARGET, L5a POLICY_DENIED) written by the live tests through `CUA_EVIDENCE_ROOT`.
 
 ## Production and evolution seams
 
@@ -503,16 +646,18 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 | Boundary check is a pytest AST scan of `src/cua` | Becomes the fresh-clone `verify.sh` structural assertion (ARCHITECTURE §4) |
 | One `Surface` implementation (Chromium via Playwright), single-use per run | `DesktopAccessibilitySurface` behind the same Protocol; descriptors are already role + name + scope (designed, not implemented) |
 | Refs resolved by `(role, name, ordinal)` inside the surface | Durable targeting via `TargetDescriptor` strategies is now the `TargetResolver` (M4); refs stay observation-local forever — the resolver returns one only together with the snapshot it belongs to |
-| `_dispatch()` only counts and invalidates refs | Emits `ACTION_DISPATCHED` through the EvidenceWriter (step 9) |
-| `ReplayDeps = {surface, action_gate, clock}` | `evidence_writer`/`redactor` join at step 9; `control_owner` is read through the gate today and directly at step 16 for suspension |
+| `PlaywrightSurface` notifies a `DispatchListener` before/after each driver op; `NullDispatchListener` for adapter tests | A second surface implements the same three notifications; `ARTIFACT_CAPTURED` (screenshots) joins at the HITL milestone |
+| `ReplayDeps = {surface, action_gate, clock, evidence}` — one `EvidenceRecorder` shared with the surface and the gate | `control_owner` is read through the gate today and directly at step 16 for suspension; discovery composes the same recorder with `RunKind.DISCOVERY` (schema bump) |
 | REQUIRE_INTERVENTION → FAILURE/INTERVENTION_REQUIRED | Step 16: suspend, create `InterventionRequest`, resume on verified hand-back |
 | No re-dispatch of any action; polling only | D16 rules (one SAFE_READ retry, gated modal dismissal) added when a demo run shows the need |
-| `RunResult` in memory only; bound values appear in `FailureDetail.expected/observed` | EvidenceWriter persists a redacted envelope (step 9) |
+| `RunResult` stays unredacted in memory (debuggable); the terminal event persists its redacted summary | Sensitivity markers on `InputSpec`/`OutputSpec` would let the Redactor treat declared-sensitive outputs like inputs |
 | `tag_hint` always `None` | Filled only if a concrete consumer appears |
 | `ControlOwner` is a state holder with a test-only constructor state | Step 16 adds the transitions (escalate / accept / done / verified / abort); the gate already denies on any non-AUTOMATION state |
 | Policy config is a static JSON file with segment-wise route patterns | Tenant overlays (designed only) vary base origin and route aliases; risk/policy fields have no overlay grammar by construction |
 | Artifact validators are schema-level (I1, I2, I4, I5, I6-by-construction) | Step 13's compiler adds trace-based checks (a declared discovery input must not survive as a literal) and `compile_report.json` |
-| `KnownOutcome.terminal_status` is a string literal | Becomes `replay.TerminalStatus.BUSINESS_OUTCOME` once M4 defines the terminal vocabulary |
+| `KnownOutcome.terminal_status` is a string literal | Stays a literal (`artifact/` must not import `replay/`); agreement asserted by a test |
+| Evidence vocabulary 1.0: eight event types, `RunKind.REPLAY` only, no screenshots | Each addition is a `schema_version` bump; readers validate strictly, old files stay valid under their own version |
+| Evidence failure = `FAILURE / EVIDENCE_ERROR`, fail closed, one failure per run | `UNKNOWN_COMMIT_STATE` (HITL milestone) reuses the same after-dispatch fact for irreversible steps |
 
 ## Current risks / unverified assumptions
 
@@ -532,10 +677,20 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
   proven with the fake clock, not with a slow live page.
 - Timing defaults (5 s resolution, 5 s condition, 100 ms poll) are operational guesses; a real
   target may need tuning (tenant overlay "wait tuning" seam).
+- The value-redaction rule replaces *known* values only; a very short or very common input value
+  could over-redact (guarded below 3 characters), and derived PII in observed prose is not
+  detected. Both are documented V1 limits, acceptable only because the target data is synthetic.
+- Per-event `fsync` is negligible at ~14 events per run; a long discovery run (25 steps × a few
+  events) is still well under a second of I/O, but this has not been measured against a slow disk.
+- A surface not wired to the run's recorder is detected on the first *successful* dispatch; if
+  the very first driver operation fails on an unwired surface the step is recorded as
+  `dispatched=False` (the run fails anyway). The composition root must wire the recorder.
 
 ## Next milestone
 
-**Milestone 5 — EvidenceWriter + Redactor** (ARCHITECTURE §15 step 9): the JSONL envelope,
-`ACTION_DISPATCHED` / `ACTION_COMPLETED` / `ACTION_FAILED` emitted from the surface's
-`_dispatch()` boundary, redaction before disk, failure screenshots, `evidence/replay/<run_id>/`
-for the M4 proofs, and `RunResult` persistence through the writer only.
+**Milestone 6 — `LLMClient` + structured action output, `DiscoveryAgent` + normalized trace,
+E01** (ARCHITECTURE §15 steps 10–12). Discovery composes the same `EvidenceRecorder` (a
+`RunKind.DISCOVERY` schema bump plus the observation/model events it needs), drives every action
+through the same `ActionGate.dispatch`, and reuses `Redactor.redact_text` on model intent text.
+The boundary test's `google` rule narrows to `llm/` at that point; no provider SDK or credential
+is committed. Screenshots and HITL transitions follow at step 16.
