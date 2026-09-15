@@ -51,6 +51,10 @@ class FailureCode(StrEnum):
     INVALID_INPUT = "INVALID_INPUT"
     TRANSFORM_ERROR = "TRANSFORM_ERROR"
     SURFACE_ERROR = "SURFACE_ERROR"
+    # The evidence layer could not record the run (ARCHITECTURE §10, D19). Its own failure
+    # domain: never SURFACE_ERROR, never POLICY_DENIED. A run without its proof is not a success;
+    # the message says which event failed and whether a driver action had already been attempted.
+    EVIDENCE_ERROR = "EVIDENCE_ERROR"
 
 
 class StepStatus(StrEnum):

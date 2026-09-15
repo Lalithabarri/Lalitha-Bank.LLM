@@ -65,18 +65,54 @@ def live_bank_ambiguous() -> Iterator[LiveBank]:
     yield from _serve(FaultMode.AMBIGUOUS_SAVINGS)
 
 
-@pytest.fixture
-def surface():
-    """A headless PlaywrightSurface; skips with a clear reason if Chromium is not installed."""
+def _open_surface(**kwargs):
     from cua.surface.playwright_surface import PlaywrightSurface
 
-    surface = PlaywrightSurface(headless=True)
+    surface = PlaywrightSurface(headless=True, **kwargs)
     try:
         surface.open()
     except Exception as exc:  # noqa: BLE001 - any launch failure means "no browser here"
         if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
             pytest.skip(f"Chromium not installed: run `uv run playwright install chromium` ({exc})")
         raise
+    return surface
+
+
+@pytest.fixture
+def surface():
+    """A headless PlaywrightSurface; skips with a clear reason if Chromium is not installed.
+
+    Adapter-level: no dispatch listener. Replay tests use ``recorded_surface`` instead.
+    """
+    surface = _open_surface()
+    try:
+        yield surface
+    finally:
+        surface.close()
+
+
+# --- Milestone 5: evidence composition for live replays -----------------------------------------
+
+
+@pytest.fixture
+def evidence_store(tmp_path):
+    from cua.evidence import EvidenceStore
+
+    return EvidenceStore(tmp_path / "evidence")
+
+
+@pytest.fixture
+def evidence_recorder(evidence_store):
+    """A recorder that writes real JSONL under ``tmp_path`` (the production sink)."""
+    from cua.evidence import EvidenceRecorder
+
+    return EvidenceRecorder(evidence_store.open_run)
+
+
+@pytest.fixture
+def recorded_surface(evidence_recorder):
+    """A headless PlaywrightSurface wired to ``evidence_recorder`` — the production wiring."""
+    surface = _open_surface(listener=evidence_recorder)
     try:
         yield surface
     finally:

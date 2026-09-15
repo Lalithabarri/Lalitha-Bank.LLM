@@ -350,3 +350,165 @@ def test_snapshot_from_live_browser_round_trips_as_json(surface, live_bank):
     text = snap.model_dump_json()
     assert SurfaceSnapshot.model_validate_json(text) == snap
     assert all(e.tag_hint is None for e in snap.elements)  # V1: deliberately not collected
+
+
+# --- Milestone 5: dispatch evidence at the driver boundary (ARCHITECTURE §10) ----------------
+
+
+class RefusingEvidence(Exception):
+    """Stands in for the evidence layer's own error; the surface must not know its type."""
+
+
+class Listener:
+    """Records every notification in order; can be told to refuse at one of the three points."""
+
+    def __init__(self, refuse_on: str | None = None) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self.refuse_on = refuse_on
+
+    def _note(self, name: str, record, payload=None) -> None:
+        self.calls.append((name, (record, payload)))
+        if name == self.refuse_on:
+            raise RefusingEvidence(f"cannot record {name}")
+
+    def on_dispatched(self, record) -> None:
+        self._note("on_dispatched", record)
+
+    def on_completed(self, record, result) -> None:
+        self._note("on_completed", record, result)
+
+    def on_failed(self, record, error) -> None:
+        self._note("on_failed", record, error)
+
+    @property
+    def names(self) -> list[str]:
+        return [name for name, _ in self.calls]
+
+
+@pytest.fixture
+def listening_surface():
+    from cua.surface.playwright_surface import PlaywrightSurface
+
+    listener = Listener()
+    surface = PlaywrightSurface(headless=True, listener=listener)
+    surface.open()
+    try:
+        yield surface, listener
+    finally:
+        surface.close()
+
+
+def test_successful_action_is_dispatched_then_completed_with_no_ref_in_the_record(
+    listening_surface, live_bank
+):
+    surface, listener = listening_surface
+    navigate(surface, live_bank.url("/members/search"))
+    snap = observe(surface, "m5_search")
+    textbox = one(snap, role="textbox", name="Member ID")
+    surface.act(SurfaceAction(action_type=ActionType.FILL, ref=textbox.ref, value="M1001"))
+
+    assert listener.names == ["on_dispatched", "on_completed", "on_dispatched", "on_completed"]
+    (nav_record, _), (nav_done, nav_result) = listener.calls[0][1], listener.calls[1][1]
+    assert nav_record.action_type is ActionType.NAVIGATE
+    assert nav_record.dispatch_seq == 1 and nav_record.url_before == "about:blank"
+    assert nav_record.destination == live_bank.url("/members/search")
+    assert nav_done is nav_record and nav_result.url_after == live_bank.url("/members/search")
+
+    (fill_record, _), (_, fill_result) = listener.calls[2][1], listener.calls[3][1]
+    assert fill_record.dispatch_seq == 2 and fill_record.observation_index == snap.step_index
+    assert (fill_record.target_role, fill_record.target_name) == ("textbox", "Member ID")
+    assert fill_record.value == "M1001" and fill_result.value == "M1001"
+    assert "ref" not in fill_record.model_dump()
+    assert surface.dispatched_actions == 2
+
+
+def test_action_dispatched_precedes_the_driver_call_and_a_refusal_leaves_no_trace(live_bank):
+    from cua.surface.playwright_surface import PlaywrightSurface
+
+    listener = Listener(refuse_on="on_dispatched")
+    surface = PlaywrightSurface(headless=True, listener=listener)
+    surface.open()
+    try:
+        with pytest.raises(RefusingEvidence):
+            navigate(surface, live_bank.url("/members/search"))
+        assert listener.names == ["on_dispatched"]
+        assert surface.dispatched_actions == 0  # not represented as attempted
+        assert surface.observe().url == "about:blank"  # the driver never navigated
+    finally:
+        surface.close()
+
+
+def test_refusal_before_a_fill_leaves_the_field_and_the_refs_untouched(live_bank):
+    from cua.surface.playwright_surface import PlaywrightSurface
+
+    listener = Listener()
+    surface = PlaywrightSurface(headless=True, listener=listener)
+    surface.open()
+    try:
+        navigate(surface, live_bank.url("/members/search"))
+        snap = observe(surface, "m5_refuse_fill")
+        textbox = one(snap, role="textbox", name="Member ID")
+        listener.refuse_on = "on_dispatched"
+        before = surface.dispatched_actions
+        with pytest.raises(RefusingEvidence):
+            surface.act(SurfaceAction(action_type=ActionType.FILL, ref=textbox.ref, value="M1001"))
+        assert surface.dispatched_actions == before
+        listener.refuse_on = None
+        # Refs are still valid (nothing was dispatched) and the field is still empty.
+        result = surface.act(SurfaceAction(action_type=ActionType.READ, ref=textbox.ref))
+        assert result.value == ""
+    finally:
+        surface.close()
+
+
+def test_driver_failure_after_a_recorded_dispatch_is_dispatched_then_failed(listening_surface):
+    surface, listener = listening_surface
+    with pytest.raises(SurfaceDriverError) as excinfo:
+        navigate(surface, f"http://127.0.0.1:{closed_port()}/members/search")
+    assert listener.names == ["on_dispatched", "on_failed"]
+    record, error = listener.calls[1][1]
+    assert error is excinfo.value and type(error).__name__ == "SurfaceDriverError"
+    assert record.dispatch_seq == 1
+    assert surface.dispatched_actions == 1  # the driver attempt counts (M4 invariant kept)
+
+
+def test_refusal_after_the_driver_call_propagates_and_the_action_did_happen(live_bank):
+    from cua.surface.playwright_surface import PlaywrightSurface
+
+    listener = Listener(refuse_on="on_completed")
+    surface = PlaywrightSurface(headless=True, listener=listener)
+    surface.open()
+    try:
+        with pytest.raises(RefusingEvidence):
+            navigate(surface, live_bank.url("/members/search"))
+        assert listener.names == ["on_dispatched", "on_completed"]
+        assert surface.dispatched_actions == 1
+        assert surface.observe().url == live_bank.url("/members/search")  # it navigated
+    finally:
+        surface.close()
+
+
+def test_refusal_on_failed_carries_the_driver_error_as_context():
+    from cua.surface.playwright_surface import PlaywrightSurface
+
+    listener = Listener(refuse_on="on_failed")
+    surface = PlaywrightSurface(headless=True, listener=listener)
+    surface.open()
+    try:
+        with pytest.raises(RefusingEvidence) as excinfo:
+            navigate(surface, f"http://127.0.0.1:{closed_port()}/members/search")
+        assert isinstance(excinfo.value.__context__, SurfaceDriverError)
+        assert surface.dispatched_actions == 1
+    finally:
+        surface.close()
+
+
+def test_unknown_ref_produces_no_dispatch_notification(listening_surface, live_bank):
+    surface, listener = listening_surface
+    navigate(surface, live_bank.url("/members/search"))
+    observe(surface, "m5_unknown_ref")
+    listener.calls.clear()
+    with pytest.raises(UnknownRefError):
+        surface.act(SurfaceAction(action_type=ActionType.CLICK, ref="e999"))
+    assert listener.names == []
+    assert surface.dispatched_actions == 1

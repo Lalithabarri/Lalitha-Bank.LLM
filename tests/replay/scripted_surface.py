@@ -7,6 +7,13 @@ that reused a ref across observations would fail here exactly as it would agains
 Pages are the captured fixtures; the "Search" button behaves like the Legacy Bank: a known
 member id navigates to that member's detail, anything else stays on the search screen with the
 not-found alert carrying the typed id.
+
+Dispatch evidence mirrors ``PlaywrightSurface`` exactly: ``listener.on_dispatched`` before the
+"driver" step (a raising listener leaves ``dispatched_actions`` and the refs untouched), then the
+counter and ref invalidation, then the operation, then ``on_completed`` / ``on_failed``.
+``raise_on_act`` set to a ``SurfaceDriverError`` fails *as the driver operation* (after
+``on_dispatched``, like a dead port); any other exception is raised before anything happens
+(like an ``UnknownRefError`` from ref resolution, or a programming error).
 """
 
 from __future__ import annotations
@@ -16,8 +23,12 @@ from pathlib import Path
 from cua.domain import ActionType, SurfaceElement, SurfaceSnapshot
 from cua.surface import (
     ActResult,
+    DispatchListener,
+    DispatchRecord,
+    NullDispatchListener,
     StaleObservationError,
     SurfaceAction,
+    SurfaceDriverError,
     UnknownRefError,
     UnsupportedActionError,
 )
@@ -45,9 +56,11 @@ class ScriptedSurface:
         base_url: str = "http://fake.test",
         ambiguous: bool = False,
         pages: dict[str, str] | None = None,
+        listener: DispatchListener | None = None,
     ) -> None:
         self.base_url = base_url
         self.ambiguous = ambiguous
+        self.listener: DispatchListener = listener or NullDispatchListener()
         # path -> raw aria text; tests may override or add pages (e.g. one missing a control).
         self.pages: dict[str, str] = {
             "/members/search": fixture_text("A_search"),
@@ -93,43 +106,85 @@ class ScriptedSurface:
         )
 
     def act(self, action: SurfaceAction) -> ActResult:
-        if self.raise_on_act is not None:
-            raise self.raise_on_act
+        if self.raise_on_act is not None and not isinstance(self.raise_on_act, SurfaceDriverError):
+            raise self.raise_on_act  # before anything: ref resolution / programming error
         if action.action_type is ActionType.NAVIGATE:
             if not action.url:
                 raise UnsupportedActionError("NAVIGATE requires url")
-            self._dispatch()
             assert action.url.startswith(self.base_url), action.url
-            self.path = action.url[len(self.base_url) :] or "/"
-            self.typed = {}
-            self.not_found_for = None
-            return ActResult(action_type=action.action_type, url_after=self._url())
+            record = self._record(action, destination=action.url)
+
+            def navigate() -> ActResult:
+                self.path = action.url[len(self.base_url) :] or "/"
+                self.typed = {}
+                self.not_found_for = None
+                return ActResult(action_type=action.action_type, url_after=self._url())
+
+            return self._attempt(record, navigate)
 
         if not self._refs_valid:
             raise StaleObservationError("refs are stale: observe() again")
         element = next((e for e in self._elements if e.ref == action.ref), None)
         if element is None:
             raise UnknownRefError(f"{action.ref} is not part of the current observation")
-        self._dispatch()
-        value: str | None = None
-        if action.action_type is ActionType.READ:
-            value = element.value
-        elif action.action_type is ActionType.FILL:
-            assert action.value is not None
-            self.typed[element.accessible_name] = action.value
-            value = action.value
-        elif action.action_type is ActionType.CLICK:
-            self._click(element)
-        else:
-            raise UnsupportedActionError(f"{action.action_type.value} not scripted")
-        return ActResult(
-            action_type=action.action_type, ref=action.ref, value=value, url_after=self._url()
-        )
+        record = self._record(action, element=element)
+
+        def operate() -> ActResult:
+            value: str | None = None
+            if action.action_type is ActionType.READ:
+                value = element.value
+            elif action.action_type is ActionType.FILL:
+                assert action.value is not None
+                self.typed[element.accessible_name] = action.value
+                value = action.value
+            elif action.action_type is ActionType.CLICK:
+                self._click(element)
+            else:
+                raise UnsupportedActionError(f"{action.action_type.value} not scripted")
+            return ActResult(
+                action_type=action.action_type, ref=action.ref, value=value, url_after=self._url()
+            )
+
+        return self._attempt(record, operate)
 
     def close(self) -> None:
         pass
 
-    # --- scripting --------------------------------------------------------------------------
+    # --- dispatch evidence (same order as PlaywrightSurface) ----------------------------------
+
+    def _record(
+        self,
+        action: SurfaceAction,
+        *,
+        destination: str | None = None,
+        element: SurfaceElement | None = None,
+    ) -> DispatchRecord:
+        return DispatchRecord(
+            session_id=self.session_id,
+            dispatch_seq=self.dispatched_actions + 1,
+            observation_index=self._step_index,
+            action_type=action.action_type,
+            url_before=self._url() if self.path != "about:blank" else "about:blank",
+            destination=destination,
+            target_role=element.role if element else None,
+            target_name=element.accessible_name if element else None,
+            value=action.value
+            if action.action_type in (ActionType.FILL, ActionType.SELECT)
+            else None,
+        )
+
+    def _attempt(self, record: DispatchRecord, operation) -> ActResult:
+        self.listener.on_dispatched(record)
+        self._dispatch()
+        try:
+            if isinstance(self.raise_on_act, SurfaceDriverError):
+                raise self.raise_on_act  # the "driver" fails after the attempt is recorded
+            result = operation()
+        except SurfaceDriverError as exc:
+            self.listener.on_failed(record, exc)
+            raise
+        self.listener.on_completed(record, result)
+        return result
 
     def _dispatch(self) -> None:
         self.dispatched_actions += 1

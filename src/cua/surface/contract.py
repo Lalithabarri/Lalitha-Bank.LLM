@@ -17,6 +17,14 @@ Errors fall into two classes, and callers treat them differently:
   between observe and act). A replay may report these as a failure of the run.
 * caller-contract violations — ``StaleObservationError`` and ``UnsupportedActionError``. These
   mean the caller misused the contract and must propagate as programming errors.
+
+Dispatch evidence (ARCHITECTURE §10): a Surface implementation reports every driver-bound action
+to a ``DispatchListener`` — ``on_dispatched`` immediately *before* the driver operation (the
+ground truth that an automated action was attempted), then exactly one of ``on_completed`` /
+``on_failed``. The listener is observational: it never decides, resolves, or acts. If
+``on_dispatched`` raises, the driver operation must not run and the action must not be counted as
+attempted; if a later notification raises, the exception propagates as-is (the action did happen).
+``DispatchRecord`` carries no ref — refs never leave the snapshot they came from.
 """
 
 from typing import Protocol
@@ -68,6 +76,43 @@ class SurfaceDriverError(SurfaceError):
     Raised by a Surface implementation in place of any driver-specific exception, so no driver
     type ever crosses the boundary. The original driver error is chained as ``__cause__``.
     """
+
+
+class DispatchRecord(DomainModel):
+    """What the Surface knows about an action as it crosses the driver boundary. No ref."""
+
+    session_id: str
+    dispatch_seq: int  # the number this attempt gets if it proceeds (== dispatched count after)
+    observation_index: int  # the surface's observation counter at dispatch time
+    action_type: ActionType
+    url_before: str
+    destination: str | None = None  # NAVIGATE
+    target_role: str | None = None  # semantic identity of the element, from the observation
+    target_name: str | None = None
+    value: str | None = None  # FILL / SELECT input; in memory only, redacted before disk
+
+
+class DispatchListener(Protocol):
+    def on_dispatched(self, record: DispatchRecord) -> None:
+        """Called immediately before the driver operation. Raising prevents the operation."""
+        ...
+
+    def on_completed(self, record: DispatchRecord, result: ActResult) -> None: ...
+
+    def on_failed(self, record: DispatchRecord, error: SurfaceDriverError) -> None: ...
+
+
+class NullDispatchListener:
+    """For adapter-level tests and non-run usage only; a recorded run wires an EvidenceRecorder."""
+
+    def on_dispatched(self, record: DispatchRecord) -> None:
+        return None
+
+    def on_completed(self, record: DispatchRecord, result: ActResult) -> None:
+        return None
+
+    def on_failed(self, record: DispatchRecord, error: SurfaceDriverError) -> None:
+        return None
 
 
 class Surface(Protocol):

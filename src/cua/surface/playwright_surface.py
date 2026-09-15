@@ -24,11 +24,22 @@ would defeat the same-session proof the HITL design relies on (ARCHITECTURE §9,
 Every driver call runs inside ``_driver_calls()``: a Playwright ``Error`` (including its
 ``TimeoutError``) is re-raised as the driver-neutral ``SurfaceDriverError`` with the original
 chained as ``__cause__``. No Playwright exception type leaves this module.
+
+Dispatch evidence (ARCHITECTURE §10) — for every driver-bound action, in this exact order::
+
+    resolve the ref (a count() query, not an action)
+    -> listener.on_dispatched(record)      ACTION_DISPATCHED; if this raises, nothing below runs
+    -> dispatched_actions += 1, invalidate the observation-local ref map
+    -> driver operation
+    -> listener.on_completed / on_failed   ACTION_COMPLETED | ACTION_FAILED
+
+So an action counts as attempted only once its dispatch is recorded, and an attempted-but-failed
+driver operation (a dead port) still counts as dispatched.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -41,6 +52,9 @@ from cua.surface.aria import read_snapshot
 from cua.surface.contract import (
     SURFACE_ACTION_TYPES,
     ActResult,
+    DispatchListener,
+    DispatchRecord,
+    NullDispatchListener,
     StaleObservationError,
     SurfaceAction,
     SurfaceDriverError,
@@ -71,11 +85,17 @@ class _RefRecipe:
 
 class PlaywrightSurface:
     def __init__(
-        self, *, headless: bool = True, slow_mo_ms: int = 0, default_timeout_ms: int = 5000
+        self,
+        *,
+        headless: bool = True,
+        slow_mo_ms: int = 0,
+        default_timeout_ms: int = 5000,
+        listener: DispatchListener | None = None,
     ) -> None:
         self._headless = headless
         self._slow_mo_ms = slow_mo_ms
         self._default_timeout_ms = default_timeout_ms
+        self._listener: DispatchListener = listener or NullDispatchListener()
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -202,55 +222,93 @@ class PlaywrightSurface:
         if action.action_type is ActionType.NAVIGATE:
             if not action.url:
                 raise UnsupportedActionError("NAVIGATE requires url")
-            self._dispatch(action)
-            with _driver_calls():
-                page.goto(action.url)
-                page.wait_for_load_state()
-                return ActResult(action_type=action.action_type, url_after=page.url)
+            url = action.url
+
+            def navigate() -> ActResult:
+                with _driver_calls():
+                    page.goto(url)
+                    page.wait_for_load_state()
+                    return ActResult(action_type=action.action_type, url_after=page.url)
+
+            return self._attempt(self._record(action, destination=url), navigate)
 
         if not action.ref:
             raise UnsupportedActionError(f"{action.action_type.value} requires ref")
+        if action.action_type in (ActionType.FILL, ActionType.SELECT) and action.value is None:
+            raise UnsupportedActionError(f"{action.action_type.value} requires value")
         locator = self._resolve(action.ref)
-        role = self._ref_map[action.ref].role
+        recipe = self._ref_map[action.ref]
 
-        value: str | None
-        if action.action_type is ActionType.READ:
-            self._dispatch(action)
+        def operate() -> ActResult:
+            value: str | None
             with _driver_calls():
-                value = locator.input_value() if role in _INPUT_ROLES else locator.inner_text()
-        elif action.action_type is ActionType.FILL:
-            if action.value is None:
-                raise UnsupportedActionError("FILL requires value")
-            self._dispatch(action)
-            with _driver_calls():
-                locator.fill(action.value)
-                value = locator.input_value()
-        elif action.action_type is ActionType.SELECT:
-            if action.value is None:
-                raise UnsupportedActionError("SELECT requires value")
-            self._dispatch(action)
-            with _driver_calls():
-                locator.select_option(label=action.value)
-            value = action.value
-        else:  # CLICK
-            self._dispatch(action)
-            with _driver_calls():
-                locator.click()
-            value = None
+                if action.action_type is ActionType.READ:
+                    value = (
+                        locator.input_value()
+                        if recipe.role in _INPUT_ROLES
+                        else locator.inner_text()
+                    )
+                elif action.action_type is ActionType.FILL:
+                    assert action.value is not None
+                    locator.fill(action.value)
+                    value = locator.input_value()
+                elif action.action_type is ActionType.SELECT:
+                    assert action.value is not None
+                    locator.select_option(label=action.value)
+                    value = action.value
+                else:  # CLICK
+                    locator.click()
+                    value = None
+                page.wait_for_load_state()
+                return ActResult(
+                    action_type=action.action_type, ref=action.ref, value=value, url_after=page.url
+                )
 
-        with _driver_calls():
-            page.wait_for_load_state()
-            return ActResult(
-                action_type=action.action_type, ref=action.ref, value=value, url_after=page.url
-            )
+        return self._attempt(self._record(action, recipe=recipe), operate)
 
-    def _dispatch(self, action: SurfaceAction) -> None:
-        """The single point every driver-bound action passes through.
+    def _record(
+        self,
+        action: SurfaceAction,
+        *,
+        destination: str | None = None,
+        recipe: _RefRecipe | None = None,
+    ) -> DispatchRecord:
+        """The driver-neutral description of the attempt about to be made. Never carries the ref."""
+        return DispatchRecord(
+            session_id=self.session_id,
+            dispatch_seq=self.dispatched_actions + 1,
+            observation_index=self._step_index,
+            action_type=action.action_type,
+            url_before=self._require_page().url,
+            destination=destination,
+            target_role=recipe.role if recipe else None,
+            target_name=recipe.name if recipe else None,
+            value=action.value
+            if action.action_type in (ActionType.FILL, ActionType.SELECT)
+            else None,
+        )
 
-        This is where ``ACTION_DISPATCHED`` will be emitted once the EvidenceWriter exists
-        (ARCHITECTURE §10, step 9). Until then it only counts and invalidates refs: after any
-        action the page may have changed, so the current mapping is no longer trusted.
+    def _attempt(self, record: DispatchRecord, operation: Callable[[], ActResult]) -> ActResult:
+        """ACTION_DISPATCHED -> driver operation -> ACTION_COMPLETED | ACTION_FAILED.
+
+        ``on_dispatched`` runs first: if it raises, the operation is never attempted and nothing
+        on this surface changes. A notification that raises after the operation propagates as-is
+        (with the driver error as ``__context__`` on the failure path) — the action happened.
         """
+        self._listener.on_dispatched(record)
+        self._dispatch()
+        try:
+            result = operation()
+        except SurfaceDriverError as exc:
+            self._listener.on_failed(record, exc)
+            raise
+        self._listener.on_completed(record, result)
+        return result
+
+    def _dispatch(self) -> None:
+        """The single point every driver-bound action passes through, once its dispatch is
+        recorded: counts the attempt and invalidates refs — after any action the page may have
+        changed, so the current mapping is no longer trusted."""
         self.dispatched_actions += 1
         self._refs_valid = False
 

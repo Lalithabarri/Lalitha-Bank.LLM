@@ -12,9 +12,16 @@ control owner.
 
 DENY is a hard boundary: nothing here, and nothing above, converts it into a request for
 human approval. ``REQUIRE_INTERVENTION`` is reserved for ``IRREVERSIBLE`` risk (V1 rule).
+
+Evidence (ARCHITECTURE §10): ``dispatch()`` reports every decision it is about to act on to a
+``GateObserver`` — after ``authorize``, before ``Surface.act``. The observer is observational: it
+cannot change the decision, is a constructor dependency rather than a ``dispatch`` parameter,
+and is a Protocol so the gate never depends on a writer or a path. An observer that raises
+prevents the dispatch (nothing reaches the driver unrecorded).
 """
 
 from enum import StrEnum
+from typing import Protocol
 
 from cua.domain import ActionType, DomainModel, SurfaceSnapshot
 from cua.hitl.control import ControlOwner
@@ -61,10 +68,27 @@ class GateResult(DomainModel):
     explanation: str
 
 
+class GateObserver(Protocol):
+    def on_decision(self, request: GateRequest, result: GateResult) -> None:
+        """Called by ``dispatch()`` after the decision, before any driver call. Cannot alter it."""
+        ...
+
+
+class NullGateObserver:
+    def on_decision(self, request: GateRequest, result: GateResult) -> None:
+        return None
+
+
 class ActionGate:
-    def __init__(self, config: PolicyConfig, control_owner: ControlOwner) -> None:
+    def __init__(
+        self,
+        config: PolicyConfig,
+        control_owner: ControlOwner,
+        observer: GateObserver | None = None,
+    ) -> None:
         self._config = config
         self._control_owner = control_owner
+        self._observer: GateObserver = observer or NullGateObserver()
 
     def authorize(self, request: GateRequest) -> GateResult:
         target_name = request.target.accessible_name if request.target else None
@@ -124,6 +148,7 @@ class ActionGate:
             action, snapshot=snapshot, target=target, declared_risk=declared_risk
         )
         result = self.authorize(request)
+        self._observer.on_decision(request, result)  # evidence; a raising observer stops here
         if result.decision is not GateDecision.ALLOW:
             return result, None
         return result, surface.act(action)

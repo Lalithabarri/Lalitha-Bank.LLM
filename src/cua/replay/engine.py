@@ -1,7 +1,11 @@
 """ReplayEngine — deterministic execution of a CapabilityArtifact (ARCHITECTURE §7, D15, D16).
 
 ``ReplayDeps`` has no field for a model, a client, or anything that decides: surface, gate,
-clock. "No LLM in the decision loop" is a property of the type, not a convention.
+clock, evidence recorder. "No LLM in the decision loop" is a property of the type, not a
+convention. The recorder is observational (ARCHITECTURE §10): the engine brackets the run
+(``RUN_STARTED`` … ``RUN_COMPLETED`` | ``RUN_FAILED``), names the current step so the gate's and
+the surface's own notifications are stamped with it, and reports a business outcome — it never
+consults evidence to decide anything, and a memory sink yields identical results.
 
 For every ordered step:
 
@@ -18,9 +22,19 @@ on SUCCESS. There is no automatic re-dispatch of any action in M4: the only "ret
 observation polls inside one bounded window (resolution, postcondition, checkpoint).
 
 Error boundary: only ``SurfaceDriverError`` and ``UnknownRefError`` — runtime failures of the
-surface — become ``FAILURE / SURFACE_ERROR``. Contract violations (``StaleObservationError``,
-``UnsupportedActionError``), the gate's ``ValueError``s, and every other exception are
-programming errors and propagate.
+surface — become ``FAILURE / SURFACE_ERROR``; only ``EvidenceError`` — the evidence layer could
+not record — becomes ``FAILURE / EVIDENCE_ERROR`` (never relabelled as a surface or policy
+failure). Contract violations (``StaleObservationError``, ``UnsupportedActionError``), the
+gate's ``ValueError``s, and every other exception are programming errors and propagate.
+
+Evidence failure semantics (fail closed, never repeat): the first ``EvidenceError`` ends the run.
+If it happened before the driver call (``GATE_DECISION`` or ``ACTION_DISPATCHED`` could not be
+written) the action was not attempted and the step is ``dispatched=False``; if after (the
+``ACTION_COMPLETED`` / ``ACTION_FAILED`` write failed) the action was attempted, the step is
+``dispatched=True`` and is never redispatched. Once evidence has failed nothing more is written
+for the run — not even a ``RUN_FAILED`` describing the evidence failure — and the in-memory
+result carries the story. A terminal write failure turns a SUCCESS into ``EVIDENCE_ERROR`` with
+its outputs discarded: outputs are authoritative only on a proven SUCCESS.
 """
 
 from __future__ import annotations
@@ -33,6 +47,7 @@ from pydantic import field_validator
 from cua.artifact import CapabilityArtifact
 from cua.domain import ActionType, DomainModel, SurfaceSnapshot
 from cua.domain.ids import new_run_id
+from cua.evidence import EvidenceError, EvidenceRecorder, RunKind
 from cua.policy import ActionGate, GateDecision, GateResult, ResolvedTarget, RiskTier
 from cua.replay.binding import (
     BindingError,
@@ -63,6 +78,7 @@ from cua.replay.result import (
     StepStatus,
     TerminalStatus,
 )
+from cua.replay.summaries import run_started_payload, terminal_payload
 from cua.replay.transforms import TransformError, apply_transform, validate_output
 from cua.surface.contract import (
     ActResult,
@@ -103,11 +119,16 @@ class ReplayConfig(DomainModel):
 
 @dataclass(frozen=True)
 class ReplayDeps:
-    """Everything the engine needs. Deliberately no LLM, no model, no client (D15)."""
+    """Everything the engine needs. Deliberately no LLM, no model, no client (D15).
+
+    ``evidence`` is the recorder that the surface and the gate are also wired to (ARCHITECTURE §7
+    lists the evidence writer among the replay dependencies); it observes, it never decides.
+    """
 
     surface: Surface
     action_gate: ActionGate
     clock: Clock
+    evidence: EvidenceRecorder
 
 
 class _Stop(Exception):
@@ -124,6 +145,7 @@ class _Stop(Exception):
 @dataclass
 class _StepState:
     step: BoundStep
+    index: int  # 1-based position in the artifact
     status: StepStatus = StepStatus.NOT_REACHED
     observations: int = 0
     gate_decision: GateDecision | None = None
@@ -167,33 +189,42 @@ class ReplayEngine:
     def run(self, artifact: CapabilityArtifact, inputs: Mapping[str, str]) -> RunResult:
         state = _RunState(run_id=new_run_id(), session_id=self._deps.surface.session_id)
         try:
-            view = self._bind(artifact, inputs)
-            state.steps = [_StepState(step) for step in view.steps]
-            for step_state in state.steps:
-                self._execute(artifact, view, state, step_state)
-            state.current = None
-            self._wait_for(
-                state, None, view.success_checkpoint, view.known_outcomes, "success_checkpoint"
-            )
-        except _Stop as stop:
-            return self._terminal(artifact, state, stop)
-
-        # Cross-object proof the result model cannot make on its own: every declared output was
-        # produced (exactly once — enforced at record time), nothing undeclared exists.
-        if set(state.outputs) != set(artifact.outputs):
-            raise RuntimeError(
-                "engine invariant violated: outputs "
-                f"{sorted(state.outputs)} != declared {sorted(artifact.outputs)}"
-            )
-        return RunResult(
-            run_id=state.run_id,
-            artifact_id=artifact.artifact_id,
-            capability_version=artifact.capability_version,
-            session_id=state.session_id,
-            status=TerminalStatus.SUCCESS,
-            outputs=dict(state.outputs),
-            steps=[s.record() for s in state.steps],
-        )
+            try:
+                self._begin_evidence(artifact, inputs, state)
+                view = self._bind(artifact, inputs)
+                state.steps = [
+                    _StepState(step, index) for index, step in enumerate(view.steps, start=1)
+                ]
+                for step_state in state.steps:
+                    self._execute(artifact, view, state, step_state)
+                state.current = None
+                self._deps.evidence.clear_step()
+                self._wait_for(
+                    state, None, view.success_checkpoint, view.known_outcomes, "success_checkpoint"
+                )
+            except _Stop as stop:
+                result = self._terminal(artifact, state, stop)
+            else:
+                # Cross-object proof the result model cannot make on its own: every declared
+                # output was produced (exactly once — enforced at record time), nothing
+                # undeclared exists.
+                if set(state.outputs) != set(artifact.outputs):
+                    raise RuntimeError(
+                        "engine invariant violated: outputs "
+                        f"{sorted(state.outputs)} != declared {sorted(artifact.outputs)}"
+                    )
+                result = RunResult(
+                    run_id=state.run_id,
+                    artifact_id=artifact.artifact_id,
+                    capability_version=artifact.capability_version,
+                    session_id=state.session_id,
+                    status=TerminalStatus.SUCCESS,
+                    outputs=dict(state.outputs),
+                    steps=[s.record() for s in state.steps],
+                )
+            return self._record_terminal(result)
+        finally:
+            self._deps.evidence.end_run()
 
     def _terminal(self, artifact: CapabilityArtifact, state: _RunState, stop: _Stop) -> RunResult:
         if state.current is not None:
@@ -209,6 +240,71 @@ class ReplayEngine:
             failure=stop.failure,
             steps=[s.record() for s in state.steps],
         )
+
+    # --- evidence bracket ----------------------------------------------------------------------
+
+    def _begin_evidence(
+        self, artifact: CapabilityArtifact, inputs: Mapping[str, str], state: _RunState
+    ) -> None:
+        """RUN_STARTED before anything else, so even an INVALID_INPUT run leaves a trace.
+
+        Runtime inputs are handed to the recorder only so their values become redaction
+        placeholders; binding has not validated them yet, so only non-empty text is registered.
+        """
+        try:
+            self._deps.evidence.begin_run(
+                run_id=state.run_id,
+                run_kind=RunKind.REPLAY,
+                session_id=state.session_id,
+                artifact_id=artifact.artifact_id,
+                inputs={k: v for k, v in inputs.items() if isinstance(v, str) and v},
+                payload=run_started_payload(
+                    artifact,
+                    run_kind=RunKind.REPLAY,
+                    base_url=self._config.base_url,
+                    resolve_timeout_s=self._config.resolve_timeout_s,
+                    condition_timeout_s=self._config.condition_timeout_s,
+                    poll_interval_s=self._config.poll_interval_s,
+                ),
+            )
+        except EvidenceError as exc:
+            raise _Stop(failure=_evidence_failure(None, exc)) from exc
+
+    def _record_terminal(self, result: RunResult) -> RunResult:
+        """Persist the terminal event. Once evidence has failed, nothing more is written."""
+        recorder = self._deps.evidence
+        if not recorder.active or recorder.evidence_failed:
+            return result
+        payload = terminal_payload(result, dispatched_actions=recorder.dispatch_count)
+        try:
+            if result.status is TerminalStatus.FAILURE:
+                recorder.run_failed(payload)
+            else:
+                if result.outcome is not None:
+                    recorder.business_outcome(
+                        result.outcome.code, result.outcome.description, result.outcome.step_id
+                    )
+                recorder.run_completed(payload)
+        except EvidenceError as exc:
+            # A run whose proof could not be written is not a proven run: outputs are dropped.
+            return RunResult(
+                run_id=result.run_id,
+                artifact_id=result.artifact_id,
+                capability_version=result.capability_version,
+                session_id=result.session_id,
+                status=TerminalStatus.FAILURE,
+                failure=FailureDetail(
+                    code=FailureCode.EVIDENCE_ERROR,
+                    step_id=None,
+                    message=(
+                        f"terminal evidence could not be recorded; the run's in-memory status "
+                        f"was {result.status.value}: {exc}"
+                    ),
+                    expected="RUN_COMPLETED or RUN_FAILED persisted",
+                ),
+                steps=result.steps,
+            )
+        return result
 
     # --- binding -----------------------------------------------------------------------------
 
@@ -237,6 +333,7 @@ class ReplayEngine:
     ) -> None:
         step = step_state.step
         state.current = step_state
+        self._deps.evidence.begin_step(step.step_id, step_state.index)
         if step.action is ActionType.NAVIGATE:
             assert step.destination is not None
             action = SurfaceAction(action_type=ActionType.NAVIGATE, url=step.destination)
@@ -321,6 +418,7 @@ class ReplayEngine:
     ) -> ActResult:
         step = step_state.step
         gate = self._deps.action_gate
+        recorded_before = self._deps.evidence.dispatch_count
         try:
             if action.action_type is ActionType.NAVIGATE:
                 gate_result, act_result = gate.dispatch(
@@ -334,10 +432,21 @@ class ReplayEngine:
                     target=target,
                     declared_risk=step.declared_risk,
                 )
+        except EvidenceError as exc:
+            # Raised by the gate observer or the surface listener. ``after_dispatch`` is True only
+            # when the ACTION_COMPLETED / ACTION_FAILED write failed — the driver action was
+            # attempted and must never be repeated. Before that point nothing was attempted.
+            step_state.dispatched = exc.after_dispatch
+            if exc.after_dispatch:
+                step_state.gate_decision = GateDecision.ALLOW
+            raise _Stop(failure=_evidence_failure(step.step_id, exc)) from exc
         except _SURFACE_RUNTIME_ERRORS as exc:
-            # act() runs only on ALLOW, so the driver failing means the gate had allowed it.
+            # act() runs only on ALLOW, so the surface failing means the gate had allowed it.
+            # Whether the driver operation was actually attempted is the recorder's ground truth:
+            # an UnknownRefError (or a failing locator query) happens before ACTION_DISPATCHED,
+            # a dead port after it.
             step_state.gate_decision = GateDecision.ALLOW
-            step_state.dispatched = True
+            step_state.dispatched = self._deps.evidence.dispatch_count > recorded_before
             raise _Stop(
                 failure=_surface_failure(
                     step.step_id, f"{action.action_type.value} to succeed", exc
@@ -351,7 +460,24 @@ class ReplayEngine:
             raise _Stop(failure=_gate_failure(step, gate_result, FailureCode.INTERVENTION_REQUIRED))
         assert act_result is not None  # ALLOW: the gate dispatched exactly once
         step_state.dispatched = True
+        self._assert_dispatch_recorded(state)
         return act_result
+
+    def _assert_dispatch_recorded(self, state: _RunState) -> None:
+        """Every dispatched step has an ACTION_DISPATCHED behind it — a wiring invariant.
+
+        The surface the engine drives must be the one wired to ``deps.evidence``; a mismatch (a
+        surface with no listener, or a different recorder) is a composition bug and fails loudly
+        on the first action rather than producing a run whose evidence silently lacks dispatches.
+        """
+        dispatched = sum(1 for s in state.steps if s.dispatched)
+        recorded = self._deps.evidence.dispatch_count
+        if recorded != dispatched:
+            raise RuntimeError(
+                f"engine invariant violated: {dispatched} step(s) dispatched but {recorded} "
+                "ACTION_DISPATCHED event(s) recorded — the surface is not wired to the run's "
+                "evidence recorder"
+            )
 
     # --- outputs and waits -------------------------------------------------------------------
 
@@ -447,6 +573,21 @@ def _surface_failure(step_id: str | None, expected: str, exc: Exception) -> Fail
         step_id=step_id,
         message=f"{type(exc).__name__}: {exc}",
         expected=expected,
+    )
+
+
+def _evidence_failure(step_id: str | None, exc: EvidenceError) -> FailureDetail:
+    event = exc.event_type.value if exc.event_type else "evidence"
+    attempted = (
+        "the driver action WAS attempted and its outcome is not in evidence; it is never repeated"
+        if exc.after_dispatch
+        else "the driver action was NOT attempted"
+    )
+    return FailureDetail(
+        code=FailureCode.EVIDENCE_ERROR,
+        step_id=step_id,
+        message=f"evidence could not be recorded ({event}); {attempted}: {exc}",
+        expected=f"{event} persisted before continuing",
     )
 
 

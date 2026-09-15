@@ -11,6 +11,9 @@ This package exports only the driver-neutral contract. ``PlaywrightSurface`` liv
 from cua.surface.contract import (
     SURFACE_ACTION_TYPES,
     ActResult,
+    DispatchListener,
+    DispatchRecord,
+    NullDispatchListener,
     StaleObservationError,
     Surface,
     SurfaceAction,
@@ -24,6 +27,9 @@ from cua.surface.query import find
 __all__ = [
     "SURFACE_ACTION_TYPES",
     "ActResult",
+    "DispatchListener",
+    "DispatchRecord",
+    "NullDispatchListener",
     "StaleObservationError",
     "Surface",
     "SurfaceAction",

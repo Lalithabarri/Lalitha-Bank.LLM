@@ -4,6 +4,8 @@ Milestone 1: every ARCHITECTURE §3 package exists; cua never imports the target
 Milestone 2: Playwright is confined to one file; the public contract carries no driver type.
 Milestone 3: policy/artifact/hitl are driver-free; ActionGate is the only caller of Surface.act.
 Milestone 4: replay/ is driver-free and LLM-free; ReplayDeps has no slot for a model.
+Milestone 5: evidence/ is driver-free and LLM-free; disk writes happen only in the artifact store
+and the evidence writer; no evidence payload can hold a ref.
 """
 
 import ast
@@ -68,7 +70,16 @@ DRIVER_NEUTRAL_MODULES = [
     "replay/resolver.py",
     "replay/result.py",
     "replay/transforms.py",
+    "replay/summaries.py",
+    "evidence/__init__.py",
+    "evidence/events.py",
+    "evidence/redaction.py",
+    "evidence/writer.py",
+    "evidence/recorder.py",
 ]
+
+# The only files in cua that may write to disk (ARCHITECTURE §10: no ad-hoc writes; D19).
+DISK_WRITERS_ALLOWED = {"artifact/store.py", "evidence/writer.py"}
 
 # The only production call site of Surface.act() in cua (ARCHITECTURE §8, D09). The surface
 # package defines act(); everything else must go through the gate.
@@ -83,6 +94,7 @@ LLM_FREE_ROOTS = [
     "cua.surface",
     "cua.domain",
     "cua.replay",
+    "cua.evidence",
 ]
 LLM_MODULE_PREFIXES = ("cua.llm", "google", "cua.discovery")
 
@@ -270,7 +282,7 @@ def test_replay_deps_has_no_field_that_could_hold_a_model():
     from cua.replay import ReplayDeps
 
     fields = set(ReplayDeps.__dataclass_fields__)
-    assert fields == {"surface", "action_gate", "clock"}
+    assert fields == {"surface", "action_gate", "clock", "evidence"}
     for name in fields:
         assert not any(k in name.lower() for k in ("llm", "model", "gemini", "client")), name
 
@@ -312,3 +324,98 @@ def test_importing_replay_does_not_load_playwright_or_an_llm_sdk():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+# --- Milestone 5 -------------------------------------------------------------------------------
+
+
+def _disk_write_sites(path: Path) -> list[int]:
+    """Lines calling ``open(...)``, ``.write_text(...)``, ``.write_bytes(...)`` or ``os.fsync``."""
+    tree = ast.parse(path.read_text())
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "open":
+            lines.append(node.lineno)
+        elif isinstance(func, ast.Attribute) and func.attr in {
+            "write_text",
+            "write_bytes",
+            "fsync",
+        }:
+            lines.append(node.lineno)
+    return lines
+
+
+def test_disk_writes_happen_only_in_the_artifact_store_and_the_evidence_writer():
+    writers = {}
+    for path in _cua_files():
+        lines = _disk_write_sites(path)
+        if lines:
+            writers[str(path.relative_to(CUA_ROOT))] = lines
+    assert set(writers) == DISK_WRITERS_ALLOWED, writers
+
+
+def test_evidence_never_reaches_playwright_or_the_llm_layer_transitively():
+    reached = _transitive_cua_imports("cua.evidence")
+    assert not {m for m in reached if m.startswith(("cua.llm", "cua.discovery", "google"))}
+    assert "cua.surface.playwright_surface" not in reached
+    assert "cua.replay" not in {
+        m.split(".engine")[0] for m in reached
+    }  # no cycle: replay -> evidence only
+    for module in reached:
+        if module.startswith("cua"):
+            spec = importlib.util.find_spec(module)
+            assert spec and spec.origin
+            assert "playwright" not in _imported_roots(Path(spec.origin)), module
+
+
+def test_importing_evidence_does_not_load_playwright_or_an_llm_sdk():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, cua.evidence; "
+        "print(sorted(m for m in sys.modules "
+        "if m.startswith(('playwright', 'google', 'cua.llm', 'cua.replay'))))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]"
+
+
+def test_no_evidence_payload_model_can_hold_a_ref_or_a_snapshot():
+    from cua.evidence import PAYLOAD_MODELS, EvidenceEvent
+
+    forbidden = {"ref", "refs", "element", "elements", "snapshot", "locator", "page"}
+    for model in (*PAYLOAD_MODELS, EvidenceEvent):
+        assert not set(model.model_fields) & forbidden, model.__name__
+    # and no evidence module even imports the snapshot type
+    for name in ("events", "redaction", "writer"):
+        tree = ast.parse((CUA_ROOT / "evidence" / f"{name}.py").read_text())
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert "SurfaceSnapshot" not in imported and "SurfaceElement" not in imported, name
+
+
+def test_the_recorder_is_the_only_evidence_object_the_engine_gate_and_surface_share():
+    """The Surface listener protocol and the gate observer protocol live below evidence
+    (surface.contract / policy), so neither package imports evidence: no cycle."""
+    for relative in (
+        "surface/contract.py",
+        "surface/playwright_surface.py",
+        "policy/action_gate.py",
+    ):
+        imported = _imported_roots(CUA_ROOT / relative)
+        tree = ast.parse((CUA_ROOT / relative).read_text())
+        modules = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        assert not any(m.startswith("cua.evidence") for m in modules), (relative, modules)
+        assert "cua" in imported

@@ -370,3 +370,103 @@ def test_config_rejects_unknown_fields_and_action_types():
         PolicyConfig(allowed_action_types=frozenset({"EVAL"}))
     with pytest.raises(ValidationError):
         PolicyConfig(approvals=["anything"])
+
+
+# --- Milestone 5: the gate reports every dispatch-path decision to an observer ------------------
+
+
+class Observer:
+    """Records (request, result) pairs and the order relative to act(); can refuse."""
+
+    def __init__(self, surface: FakeSurface, refuse: bool = False) -> None:
+        self.decisions: list[tuple[GateRequest, GateResult]] = []
+        self.acts_seen_when_notified: list[int] = []
+        self._surface = surface
+        self.refuse = refuse
+
+    def on_decision(self, request: GateRequest, result: GateResult) -> None:
+        self.decisions.append((request, result))
+        self.acts_seen_when_notified.append(len(self._surface.act_calls))
+        if self.refuse:
+            raise RuntimeError("cannot record the decision")
+
+
+@pytest.mark.parametrize(
+    "config, snapshot, target, action, decision",
+    [
+        (
+            full_config(),
+            DETAIL,
+            SAVINGS_CELL,
+            SurfaceAction(action_type=ActionType.READ, ref="e30"),
+            GateDecision.ALLOW,
+        ),
+        (
+            full_config(allowed_action_types=frozenset({ActionType.READ})),
+            SEARCH,
+            None,
+            SurfaceAction(action_type=ActionType.FILL, ref="e10", value="M1001"),
+            GateDecision.DENY,
+        ),
+        (
+            full_config(),
+            TRANSFER,
+            CONFIRM_BUTTON,
+            SurfaceAction(action_type=ActionType.CLICK, ref="f4e24"),
+            GateDecision.REQUIRE_INTERVENTION,
+        ),
+    ],
+)
+def test_observer_sees_each_dispatch_decision_once_before_any_act(
+    config, snapshot, target, action, decision
+):
+    surface = FakeSurface()
+    observer = Observer(surface)
+    gate = ActionGate(config, ControlOwner(), observer=observer)
+    result, _ = gate.dispatch(surface, action, snapshot=snapshot, target=target)
+    assert result.decision is decision
+    assert len(observer.decisions) == 1
+    request, seen = observer.decisions[0]
+    assert seen == result and request.action_type is action.action_type
+    assert request.route == "/members/search" if snapshot is SEARCH else True
+    assert observer.acts_seen_when_notified == [0]  # notified before act(), if any
+    assert len(surface.act_calls) == (1 if decision is GateDecision.ALLOW else 0)
+
+
+def test_a_refusing_observer_prevents_the_dispatch():
+    surface = FakeSurface()
+    observer = Observer(surface, refuse=True)
+    gate = ActionGate(full_config(), ControlOwner(), observer=observer)
+    action = SurfaceAction(action_type=ActionType.READ, ref="e30")
+    with pytest.raises(RuntimeError, match="cannot record"):
+        gate.dispatch(surface, action, snapshot=DETAIL, target=SAVINGS_CELL)
+    assert surface.act_calls == []
+    assert len(observer.decisions) == 1
+
+
+def test_authorize_alone_does_not_notify_and_the_observer_cannot_change_the_decision():
+    surface = FakeSurface()
+    observer = Observer(surface)
+    gate = ActionGate(full_config(), ControlOwner(), observer=observer)
+    assert gate.authorize(request()).decision is GateDecision.ALLOW
+    assert observer.decisions == []
+    # A decision handed to the observer is a frozen model: it cannot be mutated into approval.
+    action = SurfaceAction(action_type=ActionType.CLICK, ref="f4e24")
+    gate.dispatch(surface, action, snapshot=TRANSFER, target=CONFIRM_BUTTON)
+    _, seen = observer.decisions[0]
+    with pytest.raises(ValidationError):
+        seen.decision = GateDecision.ALLOW  # type: ignore[misc]
+
+
+def test_the_observer_is_a_constructor_dependency_with_a_null_default():
+    import inspect
+
+    params = set(inspect.signature(ActionGate.dispatch).parameters)
+    assert params == {"self", "surface", "action", "snapshot", "target", "declared_risk"}
+    assert "observer" in inspect.signature(ActionGate.__init__).parameters
+    surface = FakeSurface()
+    gate = ActionGate(full_config(), ControlOwner())  # no observer: still dispatches
+    result, act_result = gate.dispatch(
+        surface, SurfaceAction(action_type=ActionType.READ, ref="e30"), snapshot=DETAIL
+    )
+    assert result.decision is GateDecision.ALLOW and act_result is not None

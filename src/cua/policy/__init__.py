@@ -8,8 +8,10 @@ from cua.policy.action_gate import (
     ActionGate,
     DenyReason,
     GateDecision,
+    GateObserver,
     GateRequest,
     GateResult,
+    NullGateObserver,
     ResolvedTarget,
 )
 from cua.policy.config import PolicyConfig
@@ -21,8 +23,10 @@ __all__ = [
     "ActionGate",
     "DenyReason",
     "GateDecision",
+    "GateObserver",
     "GateRequest",
     "GateResult",
+    "NullGateObserver",
     "PolicyConfig",
     "ResolvedTarget",
     "RiskRule",

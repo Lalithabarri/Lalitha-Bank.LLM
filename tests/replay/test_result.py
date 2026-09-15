@@ -39,7 +39,8 @@ def test_exactly_three_terminal_statuses():
     assert {s.value for s in TerminalStatus} == {"SUCCESS", "BUSINESS_OUTCOME", "FAILURE"}
 
 
-def test_failure_code_vocabulary_is_the_m4_minimum():
+def test_failure_code_vocabulary_is_the_m4_minimum_plus_evidence():
+    """M4's eight codes plus EVIDENCE_ERROR (M5): evidence failure is its own domain."""
     assert {c.value for c in FailureCode} == {
         "AMBIGUOUS_TARGET",
         "TARGET_NOT_FOUND",
@@ -49,6 +50,7 @@ def test_failure_code_vocabulary_is_the_m4_minimum():
         "INVALID_INPUT",
         "TRANSFORM_ERROR",
         "SURFACE_ERROR",
+        "EVIDENCE_ERROR",
     }
 
 

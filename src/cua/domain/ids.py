@@ -14,3 +14,8 @@ def new_session_id() -> str:
 def new_run_id() -> str:
     """One execution of a capability (discovery or replay)."""
     return f"run_{uuid.uuid4().hex[:12]}"
+
+
+def new_event_id() -> str:
+    """One evidence event (ARCHITECTURE §10)."""
+    return f"evt_{uuid.uuid4().hex[:12]}"
