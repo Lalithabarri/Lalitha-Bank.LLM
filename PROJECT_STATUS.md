@@ -16,8 +16,8 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 progress.** ActionGate + allowlist + risk classification + ControlOwner basics; CapabilityArtifact
 schema + ArtifactStore; the handwritten `read_savings_balance@1.0.0` artifact (ARCHITECTURE §15
 steps 4–6). Passed a pre-freeze red-team review after fixing one critical and two high findings
-(recorded in the M3 entry). 259 tests passed; ruff clean; no new dependency. Commit recorded in
-the M3 entry below.
+(recorded in the M3 entry). 259 tests passed; ruff clean; no new dependency. Committed as
+`057d1d7`, pushed to `origin/main`.
 
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
@@ -252,7 +252,8 @@ the step-8 proofs were split into Milestone 4 so the deterministic core gets its
   such segments); `text_contains` must be matched against both `accessible_name` and `value`
   in M4 (alert text lives in `value`), and unbound `{placeholder}`s must be a bind-time error,
   never a wildcard.
-- **Git commit:** see below (recorded after commit).
+- **Git commit:** `057d1d7` — feat: policy gate, artifact schema/store, handwritten
+  read_savings_balance (Milestone 3A) (pushed to `origin/main`).
 - **Presentation/pitch takeaway:** policy is structural, not conventional — an empty config
   denies every action, DENY has no field that could carry approval, and only one line of
   production code can touch the driver. The artifact is data the compiler and runtime meet at:
