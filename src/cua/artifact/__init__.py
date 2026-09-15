@@ -9,6 +9,7 @@ The compiler and trace-based invariant checks arrive at ARCHITECTURE §15 step 1
 
 from cua.artifact.schema import (
     PERSISTED_ACTION_TYPES,
+    PLACEHOLDER,
     CapabilityArtifact,
     Condition,
     ConditionType,
@@ -34,6 +35,7 @@ from cua.artifact.store import ArtifactConflict, ArtifactNotFound, ArtifactStore
 
 __all__ = [
     "PERSISTED_ACTION_TYPES",
+    "PLACEHOLDER",
     "ArtifactConflict",
     "ArtifactNotFound",
     "ArtifactStore",

@@ -7,6 +7,7 @@ production every automated action reaches ``act()`` only through ``ActionGate``
 
 import json
 import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,8 @@ from cua.domain import ActionType, SurfaceSnapshot
 from cua.surface import (
     StaleObservationError,
     SurfaceAction,
+    SurfaceDriverError,
+    SurfaceError,
     UnknownRefError,
     UnsupportedActionError,
     find,
@@ -262,6 +265,27 @@ def test_unsupported_actions_are_rejected_before_any_dispatch(surface, live_bank
     with pytest.raises(UnsupportedActionError):
         surface.act(SurfaceAction(action_type=ActionType.CLICK))  # no ref
     assert surface.dispatched_actions == before
+
+
+# --- driver failures cross the boundary as SurfaceDriverError ---------------------------------
+
+
+def closed_port() -> int:
+    """A port nothing is listening on (bound to 0, read back, released)."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def test_driver_failure_is_a_surface_driver_error_not_a_playwright_type(surface):
+    before = surface.dispatched_actions
+    with pytest.raises(SurfaceDriverError) as excinfo:
+        navigate(surface, f"http://127.0.0.1:{closed_port()}/members/search")
+    assert isinstance(excinfo.value, SurfaceError)
+    assert excinfo.value.__cause__ is not None
+    assert type(excinfo.value.__cause__).__module__.startswith("playwright")
+    assert "playwright" not in type(excinfo.value).__module__
+    assert surface.dispatched_actions == before + 1  # the action was attempted
 
 
 # --- session lifecycle -----------------------------------------------------------------------

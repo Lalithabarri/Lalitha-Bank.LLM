@@ -20,20 +20,20 @@ undocumented selector syntax is used, and no ref ever leaves a ``SurfaceSnapshot
 A surface is single-use: it names exactly one browser session (``session_id``). After
 ``close()`` it cannot be reopened and no longer answers its old ``session_id`` — a stale id
 would defeat the same-session proof the HITL design relies on (ARCHITECTURE §9, D18).
+
+Every driver call runs inside ``_driver_calls()``: a Playwright ``Error`` (including its
+``TimeoutError``) is re-raised as the driver-neutral ``SurfaceDriverError`` with the original
+chained as ``__cause__``. No Playwright exception type leaves this module.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
-from playwright.sync_api import (
-    Browser,
-    BrowserContext,
-    Locator,
-    Page,
-    Playwright,
-    sync_playwright,
-)
+from playwright.sync_api import Browser, BrowserContext, Locator, Page, Playwright, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
 
 from cua.domain import ActionType, SurfaceElement, SurfaceSnapshot
 from cua.domain.ids import new_session_id
@@ -43,11 +43,21 @@ from cua.surface.contract import (
     ActResult,
     StaleObservationError,
     SurfaceAction,
+    SurfaceDriverError,
     UnknownRefError,
     UnsupportedActionError,
 )
 
 _INPUT_ROLES = frozenset({"textbox", "combobox", "searchbox", "spinbutton"})
+
+
+@contextmanager
+def _driver_calls() -> Iterator[None]:
+    """Translate any driver failure into ``SurfaceDriverError`` at the boundary."""
+    try:
+        yield
+    except PlaywrightError as exc:
+        raise SurfaceDriverError(f"{type(exc).__name__}: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -86,29 +96,33 @@ class PlaywrightSurface:
             raise RuntimeError("surface is closed and single-use; create a new PlaywrightSurface")
         if self._page is not None:
             return self
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
-            headless=self._headless, slow_mo=self._slow_mo_ms or None
-        )
-        self._context = self._browser.new_context()
-        self._page = self._context.new_page()
-        self._page.set_default_timeout(self._default_timeout_ms)
+        with _driver_calls():
+            self._pw = sync_playwright().start()
+            self._browser = self._pw.chromium.launch(
+                headless=self._headless, slow_mo=self._slow_mo_ms or None
+            )
+            self._context = self._browser.new_context()
+            self._page = self._context.new_page()
+            self._page.set_default_timeout(self._default_timeout_ms)
         self._session_id = new_session_id()
         return self
 
     def close(self) -> None:
         """End the session. Idempotent; the surface cannot be reopened afterwards."""
-        if self._context is not None:
-            self._context.close()
-        if self._browser is not None:
-            self._browser.close()
-        if self._pw is not None:
-            self._pw.stop()
-        self._pw = self._browser = self._context = self._page = None
-        self._session_id = None
-        self._closed = True
-        self._ref_map = {}
-        self._refs_valid = False
+        try:
+            with _driver_calls():
+                if self._context is not None:
+                    self._context.close()
+                if self._browser is not None:
+                    self._browser.close()
+                if self._pw is not None:
+                    self._pw.stop()
+        finally:
+            self._pw = self._browser = self._context = self._page = None
+            self._session_id = None
+            self._closed = True
+            self._ref_map = {}
+            self._refs_valid = False
 
     def __enter__(self) -> PlaywrightSurface:
         return self.open()
@@ -133,11 +147,13 @@ class PlaywrightSurface:
         page = self._require_page()
         calls = 0
 
-        text = page.aria_snapshot(mode="ai")
+        with _driver_calls():
+            text = page.aria_snapshot(mode="ai")
         calls += 1
         elements, outline = read_snapshot(text)
 
-        title = page.title()
+        with _driver_calls():
+            title = page.title()
         calls += 1
 
         self._ref_map = _build_ref_map(elements)
@@ -167,12 +183,14 @@ class PlaywrightSurface:
         if recipe is None:
             raise UnknownRefError(f"{ref} is not part of the current observation")
         page = self._require_page()
-        locator = (
-            page.get_by_role(recipe.role, name=recipe.name, exact=True)  # type: ignore[arg-type]
-            if recipe.name
-            else page.get_by_role(recipe.role)  # type: ignore[arg-type]
-        ).nth(recipe.ordinal)
-        if locator.count() == 0:
+        with _driver_calls():
+            locator = (
+                page.get_by_role(recipe.role, name=recipe.name, exact=True)  # type: ignore[arg-type]
+                if recipe.name
+                else page.get_by_role(recipe.role)  # type: ignore[arg-type]
+            ).nth(recipe.ordinal)
+            count = locator.count()
+        if count == 0:
             raise UnknownRefError(f"{ref} no longer resolves to an element")
         return locator
 
@@ -185,9 +203,10 @@ class PlaywrightSurface:
             if not action.url:
                 raise UnsupportedActionError("NAVIGATE requires url")
             self._dispatch(action)
-            page.goto(action.url)
-            page.wait_for_load_state()
-            return ActResult(action_type=action.action_type, url_after=page.url)
+            with _driver_calls():
+                page.goto(action.url)
+                page.wait_for_load_state()
+                return ActResult(action_type=action.action_type, url_after=page.url)
 
         if not action.ref:
             raise UnsupportedActionError(f"{action.action_type.value} requires ref")
@@ -197,28 +216,33 @@ class PlaywrightSurface:
         value: str | None
         if action.action_type is ActionType.READ:
             self._dispatch(action)
-            value = locator.input_value() if role in _INPUT_ROLES else locator.inner_text()
+            with _driver_calls():
+                value = locator.input_value() if role in _INPUT_ROLES else locator.inner_text()
         elif action.action_type is ActionType.FILL:
             if action.value is None:
                 raise UnsupportedActionError("FILL requires value")
             self._dispatch(action)
-            locator.fill(action.value)
-            value = locator.input_value()
+            with _driver_calls():
+                locator.fill(action.value)
+                value = locator.input_value()
         elif action.action_type is ActionType.SELECT:
             if action.value is None:
                 raise UnsupportedActionError("SELECT requires value")
             self._dispatch(action)
-            locator.select_option(label=action.value)
+            with _driver_calls():
+                locator.select_option(label=action.value)
             value = action.value
         else:  # CLICK
             self._dispatch(action)
-            locator.click()
+            with _driver_calls():
+                locator.click()
             value = None
 
-        page.wait_for_load_state()
-        return ActResult(
-            action_type=action.action_type, ref=action.ref, value=value, url_after=page.url
-        )
+        with _driver_calls():
+            page.wait_for_load_state()
+            return ActResult(
+                action_type=action.action_type, ref=action.ref, value=value, url_after=page.url
+            )
 
     def _dispatch(self, action: SurfaceAction) -> None:
         """The single point every driver-bound action passes through.

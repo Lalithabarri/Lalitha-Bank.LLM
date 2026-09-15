@@ -67,7 +67,10 @@ PERSISTED_ACTION_TYPES: frozenset[ActionType] = frozenset(
 # real accessible names such as ".NET", "/accounts" or "#1 priority" are not rejected.
 _TRANSIENT_REF = re.compile(r"^(f\d+)?e\d+$")
 _SELECTOR_PREFIXES = ("//", "css=", "xpath=", "text=")
-_PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+# The one placeholder syntax. Public so that runtime binding substitutes exactly what the
+# validators here count as a placeholder — never two notions of "placeholder".
+PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+_PLACEHOLDER = PLACEHOLDER
 _IDENT = re.compile(r"^[a-z][a-z0-9_]*$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _OUTCOME_CODE = re.compile(r"^[A-Z][A-Z0-9_]*$")

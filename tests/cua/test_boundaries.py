@@ -3,6 +3,7 @@
 Milestone 1: every ARCHITECTURE §3 package exists; cua never imports the target app.
 Milestone 2: Playwright is confined to one file; the public contract carries no driver type.
 Milestone 3: policy/artifact/hitl are driver-free; ActionGate is the only caller of Surface.act.
+Milestone 4: replay/ is driver-free and LLM-free; ReplayDeps has no slot for a model.
 """
 
 import ast
@@ -58,6 +59,15 @@ DRIVER_NEUTRAL_MODULES = [
     "artifact/__init__.py",
     "artifact/schema.py",
     "artifact/store.py",
+    "replay/__init__.py",
+    "replay/binding.py",
+    "replay/clock.py",
+    "replay/conditions.py",
+    "replay/engine.py",
+    "replay/matching.py",
+    "replay/resolver.py",
+    "replay/result.py",
+    "replay/transforms.py",
 ]
 
 # The only production call site of Surface.act() in cua (ARCHITECTURE §8, D09). The surface
@@ -66,8 +76,15 @@ ACT_CALL_SITES_ALLOWED = {"policy/action_gate.py"}
 
 # Modules that must stay free of the LLM layer (ARCHITECTURE §4: llm/ reachable only from
 # discovery/). Checked transitively over cua-internal imports.
-LLM_FREE_ROOTS = ["cua.policy", "cua.artifact", "cua.hitl", "cua.surface", "cua.domain"]
-LLM_MODULE_PREFIXES = ("cua.llm", "google")
+LLM_FREE_ROOTS = [
+    "cua.policy",
+    "cua.artifact",
+    "cua.hitl",
+    "cua.surface",
+    "cua.domain",
+    "cua.replay",
+]
+LLM_MODULE_PREFIXES = ("cua.llm", "google", "cua.discovery")
 
 PLAYWRIGHT_TYPE_NAMES = {
     "Page",
@@ -244,3 +261,54 @@ def test_test_fakes_are_not_importable_from_src():
     for path in _cua_files():
         roots = _imported_roots(path)
         assert "tests" not in roots, str(path.relative_to(CUA_ROOT))
+
+
+# --- Milestone 4 -------------------------------------------------------------------------------
+
+
+def test_replay_deps_has_no_field_that_could_hold_a_model():
+    from cua.replay import ReplayDeps
+
+    fields = set(ReplayDeps.__dataclass_fields__)
+    assert fields == {"surface", "action_gate", "clock"}
+    for name in fields:
+        assert not any(k in name.lower() for k in ("llm", "model", "gemini", "client")), name
+
+
+def test_replay_never_reaches_playwright_or_the_llm_layer_transitively():
+    reached = _transitive_cua_imports("cua.replay")
+    assert not {m for m in reached if m.startswith(("cua.llm", "cua.discovery", "google"))}
+    assert "cua.surface.playwright_surface" not in reached
+    for module in reached:
+        if module.startswith("cua"):
+            spec = importlib.util.find_spec(module)
+            assert spec and spec.origin
+            assert "playwright" not in _imported_roots(Path(spec.origin)), module
+
+
+def test_replay_engine_contains_no_act_call_and_no_broad_except():
+    engine = CUA_ROOT / "replay" / "engine.py"
+    assert _act_call_sites(engine) == []
+    tree = ast.parse(engine.read_text())
+    broad = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler)
+        and (
+            node.type is None
+            or (isinstance(node.type, ast.Name) and node.type.id in {"Exception", "BaseException"})
+        )
+    ]
+    assert broad == [], f"broad except at lines {broad}"
+
+
+def test_importing_replay_does_not_load_playwright_or_an_llm_sdk():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, cua.replay; "
+        "print(sorted(m for m in sys.modules if m.startswith(('playwright', 'google', 'cua.llm'))))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]"

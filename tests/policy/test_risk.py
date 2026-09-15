@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import pytest
 
 from cua.domain import ActionType
 from cua.policy import (
     DEFAULT_RISK,
+    PolicyConfig,
     RiskRule,
     RiskTier,
     classify_risk,
@@ -152,3 +155,27 @@ def test_split_origin_and_path():
 )
 def test_effective_risk_never_lowers_policy_risk(policy, declared, expected):
     assert effective_risk(policy, declared) is expected
+
+
+# --- the committed config: an explicit SAFE_READ rule is never shadowed by the CLICK default ----
+
+POLICY_FILE = Path(__file__).resolve().parents[2] / "policy" / "legacy_bank.json"
+
+
+def test_committed_search_click_rule_is_live_and_the_default_applies_only_when_nothing_matches():
+    """The generic CLICK default (REVERSIBLE_WRITE) is stricter than the explicit search rule
+    (SAFE_READ); it must be used only when zero explicit rules match, never max()-ed against
+    them — otherwise the search rule would be dead."""
+    rules = PolicyConfig.from_json_file(POLICY_FILE).risk_rules
+    matching = [r for r in rules if r.matches(ActionType.CLICK, "/members/search", "Search")]
+    assert [(r.route_pattern, r.target_name, r.risk) for r in matching] == [
+        ("/members/search", None, RiskTier.SAFE_READ)
+    ]
+    assert classify_risk(rules, ActionType.CLICK, "/members/search", "Search") is RiskTier.SAFE_READ
+    for route, name in (
+        ("/members/M1001", "Transfer funds"),
+        ("/members/M1001/transfer", "Review"),
+    ):
+        assert not [r for r in rules if r.matches(ActionType.CLICK, route, name)]
+        assert classify_risk(rules, ActionType.CLICK, route, name) is DEFAULT_RISK[ActionType.CLICK]
+        assert DEFAULT_RISK[ActionType.CLICK] is RiskTier.REVERSIBLE_WRITE

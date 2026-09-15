@@ -9,6 +9,14 @@ must never be persisted as a target or treated as a browser-stable id (ARCHITECT
 Production automated execution reaches ``Surface.act()`` only through ``ActionGate``
 (ARCHITECTURE §8) — the gate is the sole production caller. Direct ``act()`` calls exist only in
 adapter-level tests that exercise the driver boundary itself.
+
+Errors fall into two classes, and callers treat them differently:
+
+* runtime / environment failures — ``SurfaceDriverError`` (the driver itself failed: navigation
+  refused, load or locator timeout, page gone) and ``UnknownRefError`` (the element vanished
+  between observe and act). A replay may report these as a failure of the run.
+* caller-contract violations — ``StaleObservationError`` and ``UnsupportedActionError``. These
+  mean the caller misused the contract and must propagate as programming errors.
 """
 
 from typing import Protocol
@@ -52,6 +60,14 @@ class StaleObservationError(SurfaceError):
 
 class UnsupportedActionError(SurfaceError):
     """The action type is not a surface operation, or a required field is missing."""
+
+
+class SurfaceDriverError(SurfaceError):
+    """The underlying driver failed (navigation refused, timeout, page gone).
+
+    Raised by a Surface implementation in place of any driver-specific exception, so no driver
+    type ever crosses the boundary. The original driver error is chained as ``__cause__``.
+    """
 
 
 class Surface(Protocol):
