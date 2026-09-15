@@ -1,0 +1,123 @@
+{
+  "artifact_id": "read_savings_balance@1.0.0",
+  "capability_name": "read_savings_balance",
+  "schema_version": "1.0",
+  "capability_version": "1.0.0",
+  "description": "Read a member's savings balance from the Legacy Bank Operations Console.",
+  "inputs": {
+    "member_id": {
+      "type": "STRING",
+      "required": true,
+      "description": "Member number, as printed on the account card"
+    }
+  },
+  "outputs": {
+    "savings_balance": {
+      "type": "DECIMAL",
+      "description": "Savings account balance in USD"
+    }
+  },
+  "steps": [
+    {
+      "step_id": "s1_open_search",
+      "description": "Open the member search screen.",
+      "action": "NAVIGATE",
+      "route": "/members/search",
+      "risk": "SAFE_READ",
+      "postcondition": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            { "role": "textbox", "name": "Member ID" }
+          ]
+        }
+      }
+    },
+    {
+      "step_id": "s2_enter_member",
+      "description": "Enter the requested member id.",
+      "action": "FILL",
+      "target": {
+        "strategies": [
+          { "role": "textbox", "name": "Member ID" },
+          { "role": "textbox", "scope": "group: Look up member" }
+        ]
+      },
+      "value": { "kind": "INPUT_REF", "input_name": "member_id" },
+      "risk": "REVERSIBLE_WRITE",
+      "postcondition": {
+        "type": "value_equals",
+        "target": {
+          "strategies": [
+            { "role": "textbox", "name": "Member ID" }
+          ]
+        },
+        "value": { "kind": "INPUT_REF", "input_name": "member_id" }
+      }
+    },
+    {
+      "step_id": "s3_search",
+      "description": "Submit the search.",
+      "action": "CLICK",
+      "target": {
+        "strategies": [
+          { "role": "button", "name": "Search" }
+        ]
+      },
+      "risk": "SAFE_READ",
+      "postcondition": {
+        "type": "route_matches",
+        "route": "/members/{member_id}"
+      }
+    },
+    {
+      "step_id": "s4_read_savings",
+      "description": "Read the Savings balance from the Accounts table.",
+      "action": "READ",
+      "target": {
+        "strategies": [
+          { "role": "cell", "scope": "table: Accounts > row: Savings" }
+        ]
+      },
+      "output": "savings_balance",
+      "risk": "SAFE_READ"
+    }
+  ],
+  "success_checkpoint": [
+    {
+      "type": "route_matches",
+      "route": "/members/{member_id}"
+    },
+    {
+      "type": "element_present",
+      "target": {
+        "strategies": [
+          { "role": "heading", "text_contains": "Member {member_id}" }
+        ]
+      }
+    }
+  ],
+  "known_outcomes": [
+    {
+      "code": "MEMBER_NOT_FOUND",
+      "terminal_status": "BUSINESS_OUTCOME",
+      "detector": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            { "role": "alert", "text_contains": "No member found for {member_id}." }
+          ]
+        }
+      },
+      "description": "The console reports no member with the requested id."
+    }
+  ],
+  "provenance": {
+    "source": "handwritten",
+    "compiled_at": "2026-09-15T00:00:00Z",
+    "discovery_run_id": null,
+    "model_id": null,
+    "compiler_version": null,
+    "goal_summary": "Read a member's savings balance by member id"
+  }
+}

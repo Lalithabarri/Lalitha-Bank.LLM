@@ -12,16 +12,17 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 2 — COMPLETE.** Surface contract + `PlaywrightSurface` + live-browser semantic
-feasibility (ARCHITECTURE §15 step 3). Committed as `b0dff2e`, pushed to `origin/main`.
-Playwright 1.62.0; Chromium feasibility states A–G all PASS; no target markup changes required;
-98 tests passed; ruff passed; Playwright imported by exactly one `cua` module; `observe()`
-measured at 2 driver calls; the ambiguity fixture preserved two Savings candidates. Known
-limitations are documented in [SURFACE_FEASIBILITY.md](SURFACE_FEASIBILITY.md).
+**Milestone 3A — COMPLETE: policy + artifact foundation; deterministic runtime remains in
+progress.** ActionGate + allowlist + risk classification + ControlOwner basics; CapabilityArtifact
+schema + ArtifactStore; the handwritten `read_savings_balance@1.0.0` artifact (ARCHITECTURE §15
+steps 4–6). Passed a pre-freeze red-team review after fixing one critical and two high findings
+(recorded in the M3 entry). 259 tests passed; ruff clean; no new dependency. Commit recorded in
+the M3 entry below.
 
+Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next milestone: **Milestone 3 — Policy-gated deterministic core.**
+Active next milestone: **Milestone 4 — Deterministic replay core** (ARCHITECTURE §15 steps 7–8).
 
 ## Completed milestones
 
@@ -165,6 +166,115 @@ through a stable, driver-neutral semantic representation, with the driver fully 
   annotation scan, contract-only public API, subprocess import check), SURFACE_FEASIBILITY.md
   (verbatim dumps, measured call counts).
 
+### Milestone 3 — ActionGate + policy + ControlOwner basics · CapabilityArtifact schema + ArtifactStore · handwritten `read_savings_balance`
+
+Maps to ARCHITECTURE §15 steps 4–6. Step 7 (resolver, conditions, RunResult, ReplayEngine) and
+the step-8 proofs were split into Milestone 4 so the deterministic core gets its own review.
+
+- **Goal:** the two things the deterministic engine will stand on — one policy chokepoint that
+  becomes the only production caller of `Surface.act()`, and a typed, versioned, parameterized
+  artifact — plus one handwritten artifact expressed entirely in M2-proven semantics. Nothing
+  executes an artifact yet.
+- **Decisions applied:** D09 (gate authority), D10 (risk over `(action_type, route[, target
+  name])`, separate from sensitivity; artifact-declared risk can raise, never lower), D11
+  (`schema_version` vs `capability_version`), D12 (`LITERAL | INPUT_REF`), D13 (ordered semantic
+  strategies), D14 (`known_outcomes[]` with declarative detectors), D18 (`ControlOwner` as
+  explicit state), §6 persisted actions / invariants, §8 gate flow and DENY-is-hard.
+  **Approved schema extension (not in the frozen provenance fields):** `Provenance.source ∈
+  {handwritten, discovery}` so a handwritten fixture can never be mistaken for genuine
+  discovery output in evidence (matters for E01). Approved renderings: `DenyReason`
+  {CONTROL_NOT_OWNED, ACTION_TYPE_NOT_ALLOWED, ORIGIN_NOT_ALLOWED, ROUTE_NOT_ALLOWED};
+  `TargetStrategy{role, name, scope, text_contains}` with `{input}` placeholders as D13's
+  concrete form (label semantics collapse into accessible name per M2 evidence).
+- **What was implemented:** `cua/policy/{routes,risk,config,action_gate}.py` (`RiskTier`
+  ordered, `RiskRule`, `classify_risk`, `effective_risk`; deny-by-default `PolicyConfig`,
+  JSON-loadable; `ActionGate.authorize` in the order owner → action type → origin → route →
+  IRREVERSIBLE; `ActionGate.dispatch` calls `surface.act` only on ALLOW);
+  `cua/hitl/control.py` (`ControlOwnerState`, `ControlOwner` with a **test-only** constructor
+  state so the CONTROL_NOT_OWNED branch is exercised now; transitions at step 16);
+  `cua/artifact/schema.py` (closed vocabularies, `TargetStrategy`/`TargetDescriptor`,
+  `ValueBinding`, four `Condition`s, `Step` shape-per-action, `KnownOutcome`, `Provenance`,
+  `CapabilityArtifact` with validators for I1 no refs, I2 declared + actually-referenced
+  inputs, I4 outputs ↔ READ steps, I5 business-outcome-only, `extra="forbid"` for I3/I6);
+  `cua/artifact/store.py` (`name@version` identity, validated load/save, identity/conflict
+  refusal); `policy/legacy_bank.json` (example config: search CLICK → SAFE_READ, "Confirm
+  transfer" CLICK → IRREVERSIBLE); `capabilities/read_savings_balance@1.0.0.json`
+  (NAVIGATE → FILL ← INPUT_REF member_id → CLICK → READ `cell` @ `table: Accounts > row:
+  Savings` → `savings_balance: DECIMAL`; checkpoint route + heading; MEMBER_NOT_FOUND via
+  `alert` detector). No new dependency. `surface/`, `domain/`, `legacy_bank/` untouched.
+- **Actual verification performed:** `uv run pytest -q` full suite; `ruff check` +
+  `ruff format --check`; independent grep for `.act(` call sites, Playwright importers, and
+  `M1001`/ref/selector strings in the artifact; adversarial one-off checks (`ref` field, `WAIT`,
+  hard-coded member, empty policy against all five action types with a counting fake surface);
+  `git diff --stat` proving M1/M2 source and tests are byte-identical except the extended
+  boundary file.
+- **Test/eval results:** 259 passed, 259 collected (M1/M2: legacy_bank 32, domain 6, surface
+  36, boundaries 41 [24 retained + 17 new]; M3 new: policy 65, hitl 6, artifact 73). ruff
+  clean. No E01–E10 evals exist yet.
+- **Bugs or incorrect assumptions discovered:** (1) first cut of `risk.py` imported
+  `route_matches` from `config.py`, which imports `RiskRule` from `risk.py` — an import cycle;
+  (2) the plan's `ControlOwner` had no way to reach a non-AUTOMATION state until step 16,
+  leaving the CONTROL_NOT_OWNED deny branch (S4/H2) untested; (3) `Provenance.source` was
+  presented as if frozen — it is an extension.
+  **Pre-freeze red-team review found and fixed before commit:** (4) CRITICAL —
+  `ActionGate.dispatch` authorized a caller-supplied route but dispatched `action.url`;
+  reproduced: allowed route + `NAVIGATE https://evil.example/` → ALLOW and `goto` called;
+  (5) HIGH — origin/route for every action were caller claims, never observed state;
+  (6) HIGH — `classify_risk` was first-match-wins: reordering a broad SAFE_READ rule before
+  the "Confirm transfer" IRREVERSIBLE rule downgraded a commit to SAFE_READ; (7) MEDIUM — the
+  flagship traceability test silently skipped `text_contains` templates, so the
+  MEMBER_NOT_FOUND detector and checkpoint heading were never actually traced to captures;
+  (8) MEDIUM — `success_checkpoint: list` had no stated semantics; (9) LOW — selector
+  heuristics rejected real accessible names (`.NET`, `/accounts`, `#1 priority`).
+- **Fixes made:** route matching moved to `policy/routes.py` (leaf); `ControlOwner(state=…)`
+  documented as the test-only mechanism and covered by parametrized gate tests; extension
+  recorded here and in the schema docstring. Red-team fixes: `dispatch(surface, action, *,
+  snapshot, target, declared_risk)` now derives origin/route itself — from `action.url` for
+  NAVIGATE, from `snapshot.url` otherwise — via `ActionGate.request_for`; no caller-supplied
+  route or decision parameter exists (asserted by a signature test); 7 off-allowlist NAVIGATE
+  cases (host, host-suffix, port, scheme, two routes) → DENY with zero `act()` calls;
+  `classify_risk` = **highest matching risk wins** (order-independent, proven both orders);
+  traceability test binds `{member_id}` with each fixture member and requires the concrete
+  string (`No member found for M404.`, `Member M1001`) in a capture — 2 templates checked;
+  `success_checkpoint` documented as **ALL** conditions in declared order (approved extension,
+  schema docstring); selector heuristics narrowed to `//`, `css=`, `xpath=`, `text=` (structural
+  `extra="forbid"` remains the real guarantee); CONTROL_NOT_OWNED dispatch test parametrized
+  over PENDING_HUMAN/HUMAN/RETURNING.
+- **Remaining limitations:** the gate has no production caller yet (M4's engine) — the
+  `.act(` call-site test is what holds that line; `KnownOutcome.terminal_status` is a
+  `Literal["BUSINESS_OUTCOME"]` string until `TerminalStatus` exists in `replay/`;
+  `policy/legacy_bank.json` hard-codes the default port origin (ephemeral-port tests build
+  configs in code); artifact validators are schema-level — the compiler's trace-based checks
+  are step 13; the handwritten artifact is unexecuted until M4; `ArtifactStore.save` writes
+  the destination directly (not atomic; a truncated file fails validation loudly on load —
+  deferred to before submission); route matcher accepts percent-encoded segments such as
+  `%2F`/`%2E%2E` as one `{param}` segment (M4 must feed the browser's decoded path or reject
+  such segments); `text_contains` must be matched against both `accessible_name` and `value`
+  in M4 (alert text lives in `value`), and unbound `{placeholder}`s must be a bind-time error,
+  never a wildcard.
+- **Git commit:** see below (recorded after commit).
+- **Presentation/pitch takeaway:** policy is structural, not conventional — an empty config
+  denies every action, DENY has no field that could carry approval, and only one line of
+  production code can touch the driver. The artifact is data the compiler and runtime meet at:
+  it cannot express a selector, a ref, a piece of code, or a hard-coded member id without
+  failing validation.
+
+#### Reviewer / benchmark signal
+
+- **Assignment signal:** the artifact schema is the named focal point; allowlist is explicit
+  and configurable; risky actions are distinguished by a justified, conservative model.
+- **Reference-project lesson applied:** central policy authority before driver dispatch;
+  typed artifact as the compiler/runtime boundary; irreversible behaviour never auto-dispatched.
+- **What our implementation improves/clarifies:** the artifact can't hard-code an input
+  (required inputs must be referenced), can't lower policy risk, and can't carry a transient
+  ref; the gate evaluates the resolved execution target, never an intent summary.
+- **Proof:** `tests/policy/test_action_gate.py` (deny-by-default, each reason, zero `act()` on
+  DENY/REQUIRE_INTERVENTION, declared risk never lowers), `tests/artifact/test_schema.py`
+  (60 cases incl. every invariant violation), `tests/artifact/test_flagship_artifact.py`
+  (parameterized, no member ids, semantics traceable to M2 captures),
+  `tests/cua/test_boundaries.py` (single `.act(` call site, LLM-free layers, Playwright-free
+  annotations).
+
 ## Decision corrections worth explaining
 
 | Initially proposed | Corrected to | Why it matters |
@@ -177,6 +287,13 @@ through a stable, driver-neutral semantic representation, with the driver fully 
 | Fill `tag_hint` via one `evaluate_all` per role on every `observe()`, `None` on order mismatch | `tag_hint` stays `None` in V1; `observe()` is 2 driver calls | No consumer needs it; per-role round trips sit inside the future discovery loop; a silent fallback is the guessing pattern the design forbids. |
 | Reusable `PlaywrightSurface` (reopen after close) | Single-use: `close()` forgets `session_id`; `open()` afterwards raises | `session_id` is the proof mechanism for the same-session HITL invariant (H1); a stale or recycled id would make that proof meaningless. |
 | Add PyYAML because the ARIA snapshot is YAML-shaped | Small line/indent reader written against real captures; no dependency | Dependencies are added on evidence of need; the observed format is one node per line. |
+| One Milestone 3 covering §15 steps 4–8 (gate, artifact, resolver, engine, proofs) | Split: M3 = steps 4–6; M4 = step 7 + step-8 proofs | Step 7 is where the determinism invariants (R2–R4) are built; it deserves its own plan and review rather than riding along with schema work. |
+| `ControlOwner` read-only until step 16, leaving CONTROL_NOT_OWNED untested | Test-only constructor state, documented as such | An invariant (S4/H2) should not go unexercised because the transitions that reach it aren't built yet. |
+| Present `Provenance.source` as part of the frozen schema | Recorded as an approved extension | Ledger honesty: the frozen doc lists provenance fields without a source marker; the marker is added deliberately so handwritten fixtures can never pass as discovery evidence. |
+| `ActionGate.dispatch(surface, action, request)` with caller-supplied origin/route | `dispatch(surface, action, *, snapshot, target, declared_risk)`; the gate derives origin/route from `action.url` (NAVIGATE) or the observed `snapshot.url` | Policy must judge the resolved execution target, not a claim (§8). The claim-based form let an allowlisted route authorize a `goto` to any URL, and would have let M4 codify a trusted-caller interface. |
+| First-matching risk rule wins | Highest matching risk wins, order-independent | A configuration reorder must never downgrade a commit button; a rule can only raise. Trade-off accepted: no rule can express "this control is safer than the broad rule" — exactly the exception a financial gate should not permit. |
+| Singular `success_checkpoint` (ARCHITECTURE wording) | Non-empty list, **ALL** semantics, declared order, short-circuit — approved extension | The four-condition vocabulary has no conjunction; a meaningful checkpoint needs route *and* heading. Recorded so M4's evaluator implements exactly this. |
+| Traceability test "every semantic string observed" while skipping templates | Templates bound with fixture member ids; concrete strings must appear in captures | A test that silently skips the two most important strings (the business-outcome detector, the checkpoint heading) would keep passing while the artifact drifted from reality. |
 
 ## Evidence produced
 
@@ -201,6 +318,18 @@ through a stable, driver-neutral semantic representation, with the driver fully 
 | `observe()` costs 2 driver calls | `::test_A_*` assertion; 27/27 dumps in SURFACE_FEASIBILITY.md |
 | Snapshot from a live browser serializes to plain JSON; `import cua.surface` does not load Playwright | `::test_snapshot_from_live_browser_round_trips_as_json`, `tests/surface/test_contract.py` |
 | The reader handles real captures and fails loudly on unknown syntax | `tests/surface/test_aria_reader.py` |
+| Policy is deny-by-default: an empty config denies every action type | `tests/policy/test_action_gate.py::test_empty_config_denies_everything` |
+| Each denial reason (owner, action type, origin, route) is produced by exactly its condition; owner is checked first | `::test_action_type_not_allowed`, `::test_origin_not_allowed`, `::test_route_not_allowed`, `::test_control_not_owned_*`, `::test_control_owner_is_checked_before_everything_else` |
+| IRREVERSIBLE → REQUIRE_INTERVENTION, never ALLOW; declared risk can raise but never lower | `::test_irreversible_requires_intervention_never_allow`, `::test_declared_risk_can_raise_but_never_lower`, `tests/policy/test_risk.py::test_effective_risk_never_lowers_policy_risk` |
+| NAVIGATE is authorized on its real destination: off-allowlist host / host-suffix / port / scheme / route → DENY, `goto` never called | `::test_navigate_is_authorized_on_its_destination_and_goto_is_never_called[*]`, `::test_navigate_to_allowlisted_destination_is_dispatched_once` |
+| Origin/route come from the observed snapshot, not a caller claim; `dispatch` has no route or decision parameter | `::test_route_is_taken_from_the_snapshot_url_not_a_caller_claim`, `::test_non_navigate_actions_require_the_observed_snapshot`, `::test_dispatch_has_no_parameter_for_a_precomputed_decision_or_route` |
+| Risk rule order can never downgrade: highest matching risk wins | `tests/policy/test_risk.py::test_highest_matching_risk_wins_regardless_of_rule_order[*]`, `::test_a_rule_can_only_raise_the_default_never_lower_another_match` |
+| Templated `text_contains` strings (MEMBER_NOT_FOUND detector, checkpoint heading) resolve to strings actually captured in M2 | `tests/artifact/test_flagship_artifact.py::test_every_semantic_string_was_observed_in_milestone_2` (2 templates checked) |
+| A DENY or REQUIRE_INTERVENTION dispatch makes zero `act()` calls; ALLOW makes exactly one | `::test_dispatch_on_deny_never_touches_the_surface`, `::test_dispatch_on_require_intervention_never_touches_the_surface`, `::test_dispatch_on_control_not_owned_never_touches_the_surface`, `::test_dispatch_on_allow_calls_act_exactly_once` |
+| `Surface.act` is called from exactly one production line in `cua` | `tests/cua/test_boundaries.py::test_surface_act_is_called_only_from_the_action_gate` |
+| The artifact JSON round-trips; refs, selectors, code, secrets, approvals, WAIT, undeclared/unused inputs, and unread outputs all fail validation | `tests/artifact/test_schema.py` (60 cases) |
+| `read_savings_balance@1.0.0` is parameterized (no `M1001`), declares MEMBER_NOT_FOUND as a business outcome, and every semantic string appears in an M2 capture | `tests/artifact/test_flagship_artifact.py` |
+| policy/artifact/hitl/surface/domain never reach `cua.llm` or `google`, transitively | `tests/cua/test_boundaries.py::test_deterministic_layers_never_reach_the_llm_layer` |
 
 No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 
@@ -217,6 +346,10 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 | Refs resolved by `(role, name, ordinal)` inside the surface | Durable targeting via `TargetDescriptor` strategies (step 7); refs stay observation-local forever |
 | `_dispatch()` only counts and invalidates refs | Emits `ACTION_DISPATCHED` through the EvidenceWriter (step 9) |
 | `tag_hint` always `None` | Filled only if a concrete consumer appears |
+| `ControlOwner` is a state holder with a test-only constructor state | Step 16 adds the transitions (escalate / accept / done / verified / abort); the gate already denies on any non-AUTOMATION state |
+| Policy config is a static JSON file with segment-wise route patterns | Tenant overlays (designed only) vary base origin and route aliases; risk/policy fields have no overlay grammar by construction |
+| Artifact validators are schema-level (I1, I2, I4, I5, I6-by-construction) | Step 13's compiler adds trace-based checks (a declared discovery input must not survive as a literal) and `compile_report.json` |
+| `KnownOutcome.terminal_status` is a string literal | Becomes `replay.TerminalStatus.BUSINESS_OUTCOME` once M4 defines the terminal vocabulary |
 
 ## Current risks / unverified assumptions
 
@@ -229,9 +362,18 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 - Headed (non-headless) operation — needed for HITL — has not been exercised yet.
 - Fresh-clone reproducibility depends on `uv` and a Chromium download.
 - `DECIMAL` transform must accept currency-formatted cells (`$2,340.50`); untested until step 7.
+- The gate has no production caller yet: M4's `ReplayEngine` must route every action through
+  `ActionGate.dispatch`; the single-call-site test will fail the moment anything else calls
+  `act()`.
+- The handwritten artifact's strategies are validated against M2 captures, not executed; M4's
+  resolver is the first thing that will resolve them live.
 
 ## Next milestone
 
-**Milestone 3 — Policy-gated deterministic core.** Begins at ARCHITECTURE §15 step 4:
-`ActionGate` + allowlist + risk classification + `ControlOwner` basics — the single authorization
-chokepoint that becomes the only production caller of `Surface.act()`.
+**Milestone 4 — Deterministic replay core** (ARCHITECTURE §15 step 7 + step-8 proofs):
+`TargetResolver` (ordered strategies, one deadline, fail-closed on >1), declarative condition
+evaluator, `RunResult` with exactly three terminal statuses, `ReplayEngine` with
+`ReplayDeps` that has no LLM field by construction; proofs: M1001 → `15275.00`, same artifact
+M1002 → `4120.75`, M404 → BUSINESS_OUTCOME/MEMBER_NOT_FOUND, `ambiguous_savings` →
+FAILURE/AMBIGUOUS_TARGET with zero dispatch of the READ, policy denial → FAILURE/POLICY_DENIED
+with zero dispatch, zero-LLM reachability of the engine.

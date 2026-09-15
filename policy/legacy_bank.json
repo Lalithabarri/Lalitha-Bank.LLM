@@ -1,0 +1,24 @@
+{
+  "allowed_origins": ["http://127.0.0.1:8000"],
+  "allowed_routes": [
+    "/members/search",
+    "/members/{member_id}",
+    "/members/{member_id}/transfer",
+    "/members/{member_id}/transfer/complete"
+  ],
+  "allowed_action_types": ["NAVIGATE", "FILL", "SELECT", "CLICK", "READ"],
+  "risk_rules": [
+    {
+      "action_type": "CLICK",
+      "route_pattern": "/members/search",
+      "target_name": null,
+      "risk": "SAFE_READ"
+    },
+    {
+      "action_type": "CLICK",
+      "route_pattern": "/members/{member_id}/transfer",
+      "target_name": "Confirm transfer",
+      "risk": "IRREVERSIBLE"
+    }
+  ]
+}

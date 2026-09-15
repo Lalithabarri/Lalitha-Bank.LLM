@@ -2,10 +2,12 @@
 
 Milestone 1: every ARCHITECTURE §3 package exists; cua never imports the target app.
 Milestone 2: Playwright is confined to one file; the public contract carries no driver type.
+Milestone 3: policy/artifact/hitl are driver-free; ActionGate is the only caller of Surface.act.
 """
 
 import ast
 import importlib
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -46,7 +48,26 @@ DRIVER_NEUTRAL_MODULES = [
     "domain/actions.py",
     "domain/surface.py",
     "domain/ids.py",
+    "policy/__init__.py",
+    "policy/routes.py",
+    "policy/risk.py",
+    "policy/config.py",
+    "policy/action_gate.py",
+    "hitl/__init__.py",
+    "hitl/control.py",
+    "artifact/__init__.py",
+    "artifact/schema.py",
+    "artifact/store.py",
 ]
+
+# The only production call site of Surface.act() in cua (ARCHITECTURE §8, D09). The surface
+# package defines act(); everything else must go through the gate.
+ACT_CALL_SITES_ALLOWED = {"policy/action_gate.py"}
+
+# Modules that must stay free of the LLM layer (ARCHITECTURE §4: llm/ reachable only from
+# discovery/). Checked transitively over cua-internal imports.
+LLM_FREE_ROOTS = ["cua.policy", "cua.artifact", "cua.hitl", "cua.surface", "cua.domain"]
+LLM_MODULE_PREFIXES = ("cua.llm", "google")
 
 PLAYWRIGHT_TYPE_NAMES = {
     "Page",
@@ -154,3 +175,72 @@ def test_legacy_bank_never_imports_cua():
         str(path.relative_to(root)) for path in root.rglob("*.py") if "cua" in _imported_roots(path)
     ]
     assert not offenders, offenders
+
+
+# --- Milestone 3 -------------------------------------------------------------------------------
+
+
+def _act_call_sites(path: Path) -> list[int]:
+    """Line numbers of every ``<something>.act(...)`` call in the file."""
+    tree = ast.parse(path.read_text())
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "act"
+    ]
+
+
+def test_surface_act_is_called_only_from_the_action_gate():
+    callers = {}
+    for path in _cua_files():
+        relative = str(path.relative_to(CUA_ROOT))
+        if relative.startswith("surface/"):
+            continue  # the surface package defines act(); it does not call it on itself
+        lines = _act_call_sites(path)
+        if lines:
+            callers[relative] = lines
+    assert set(callers) == ACT_CALL_SITES_ALLOWED, callers
+    assert len(callers["policy/action_gate.py"]) == 1
+
+
+def _cua_imports_of(module_name: str) -> set[str]:
+    """Fully qualified cua-internal (and google) modules imported by ``module_name``."""
+    spec = importlib.util.find_spec(module_name)
+    assert spec and spec.origin, module_name
+    tree = ast.parse(Path(spec.origin).read_text())
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            found.add(node.module)
+    return {m for m in found if m.startswith("cua") or m.startswith("google")}
+
+
+def _transitive_cua_imports(root: str) -> set[str]:
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        module = stack.pop()
+        if module in seen:
+            continue
+        seen.add(module)
+        if module.startswith("google"):
+            continue
+        stack.extend(_cua_imports_of(module))
+    return seen
+
+
+@pytest.mark.parametrize("root", LLM_FREE_ROOTS)
+def test_deterministic_layers_never_reach_the_llm_layer(root):
+    reached = _transitive_cua_imports(root)
+    leaked = {m for m in reached if m.startswith(LLM_MODULE_PREFIXES)}
+    assert not leaked, (root, sorted(leaked))
+
+
+def test_test_fakes_are_not_importable_from_src():
+    for path in _cua_files():
+        roots = _imported_roots(path)
+        assert "tests" not in roots, str(path.relative_to(CUA_ROOT))
