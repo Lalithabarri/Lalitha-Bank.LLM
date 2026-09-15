@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.7",
     "flask>=3.0",
     "playwright>=1.62",
+    "openai>=2",
 ]
 
 [project.scripts]
@@ -30,6 +31,7 @@ packages = ["src/cua", "src/legacy_bank"]
 testpaths = ["tests"]
 markers = [
     "browser: drives a real Chromium via Playwright against a live Legacy Bank server",
+    "live_api: makes real provider API requests; runs only with CUA_LIVE_API=1 and OPENAI_API_KEY",
 ]
 
 [tool.ruff]

@@ -2,8 +2,9 @@
 
 Run as ``python -m tests.replay.zero_model_replay --member M1001 [--live] [--evidence-root DIR]``.
 Before anything from ``cua`` is imported, an import guard is installed that makes importing
-``google*``, ``cua.llm`` or ``cua.discovery`` raise. The replay then runs to completion — against
-the scripted surface, or (``--live``) a real Chromium and an in-process Legacy Bank — with the
+``google*``, ``openai*``, ``cua.llm`` or ``cua.discovery`` raise. The replay then runs to
+completion — against the scripted surface, or (``--live``) a real Chromium and an in-process
+Legacy Bank — with the
 real evidence layer writing ``events.jsonl`` under ``--evidence-root`` (a temporary directory by
 default), and prints one JSON line. Because the interpreter is fresh, no previously imported
 module can make the guard vacuous.
@@ -18,7 +19,7 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 
-FORBIDDEN_PREFIXES = ("google", "cua.llm", "cua.discovery")
+FORBIDDEN_PREFIXES = ("google", "openai", "cua.llm", "cua.discovery")
 
 
 class _Guard(importlib.abc.MetaPathFinder):

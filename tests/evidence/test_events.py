@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from cua.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     PAYLOAD_MODELS,
+    SUPPORTED_SCHEMA_VERSIONS,
     ActionCompletedPayload,
     ActionDispatchedPayload,
     EventType,
@@ -49,8 +50,19 @@ def test_round_trips_through_json_and_the_payload_type_is_recovered():
     back = EvidenceEvent.model_validate_json(line)
     assert back == original
     assert isinstance(back.payload, ActionCompletedPayload)
-    assert back.schema_version == EVIDENCE_SCHEMA_VERSION == "1.0"
+    # Milestone 6 bumped the vocabulary to 1.1 (RunKind.DISCOVERY + four discovery events).
+    assert back.schema_version == EVIDENCE_SCHEMA_VERSION == "1.1"
     assert '"ts":"2026-09-15T12:00:00Z"' in line
+
+
+def test_every_earlier_schema_version_stays_readable():
+    """A 1.0 line (Milestone 5 sample evidence) validates under its own version number."""
+    assert SUPPORTED_SCHEMA_VERSIONS == ("1.0", "1.1")
+    line = event().model_dump_json().replace('"schema_version":"1.1"', '"schema_version":"1.0"')
+    back = EvidenceEvent.model_validate_json(line)
+    assert back.schema_version == "1.0"
+    with pytest.raises(ValidationError):
+        EvidenceEvent.model_validate_json(line.replace('"1.0"', '"9.9"'))
 
 
 def test_payload_kind_must_match_event_type():

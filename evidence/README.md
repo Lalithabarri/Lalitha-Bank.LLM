@@ -6,12 +6,14 @@ redacted **before** any byte reaches disk, every event `fsync`ed. No run file is
 
 ## Reading a run
 
-Each line is an `EvidenceEvent` (`schema_version` 1.0): `seq` is the chronology key, `event_type` is
-one of
+Each line is an `EvidenceEvent` (`schema_version` 1.0 for the Milestone 5 replay samples, 1.1 from
+Milestone 6; every version stays readable under its own number): `seq` is the chronology key,
+`event_type` is one of
 
 ```
 RUN_STARTED  GATE_DECISION  ACTION_DISPATCHED  ACTION_COMPLETED  ACTION_FAILED
-BUSINESS_OUTCOME  RUN_COMPLETED  RUN_FAILED
+BUSINESS_OUTCOME  RUN_COMPLETED  RUN_FAILED                                   (replay, 1.0)
+DISCOVERY_STARTED  OBSERVATION  MODEL_CALL  DISCOVERY_ENDED                  (discovery, 1.1)
 ```
 
 `GATE_DECISION` is written by the ActionGate after it decides and before anything reaches the
@@ -47,5 +49,31 @@ target data is synthetic.
 | `replay/run_66f4e9961684` | empty policy (L5a) | 3 | 0 | `RUN_FAILED` · `POLICY_DENIED` — one `GATE_DECISION(DENY)`, zero `ACTION_DISPATCHED` |
 
 Produced by `CUA_EVIDENCE_ROOT=evidence uv run pytest tests/replay/test_replay_live.py -k "<test>"`
-(the same opt-in mechanism as Milestone 2's `CUA_FEASIBILITY_DUMP`). Discovery and intervention
-runs will sit beside these under `discovery/` and `interventions/` once those milestones land.
+(the same opt-in mechanism as Milestone 2's `CUA_FEASIBILITY_DUMP`).
+
+## Discovery run — official E01 (Milestone 6, real OpenAI, real Chromium, real Legacy Bank)
+
+| run | scenario | events | model calls | dispatched | terminal |
+|---|---|---|---|---|---|
+| `discovery/run_e49e4d0cbe09` | `read_savings_balance(member_id)` discovered live by `gpt-5.6-sol` — first masked attempt, `policy/legacy_bank.json` verbatim, entry route `/members/search` only | 24 | 5 (0 corrective retries) | 4 | `DISCOVERY_ENDED` · `GOAL_REACHED` · `goal_satisfied: true` · `savings_balance = 15275.00` |
+
+What it proves, line by line: `DISCOVERY_STARTED` records the goal, the declared input *names*,
+provider `openai`, model `gpt-5.6-sol`, the single entry route shown to the model and
+`mask_bound_inputs: true`. Each of the five `MODEL_CALL` events is one real provider HTTP attempt
+(transport retries are fixed at 0) with the reported model id, a distinct `resp_…` response id,
+token counts and latency, the decision in semantic terms (NAVIGATE the entry route → FILL the
+"Member ID" textbox with `INPUT_REF(member_id)` → CLICK "Search" → READ the cell in
+`table: Accounts > row: Savings` → FINISH) and the application validator's verdict. Every
+`ACTION_DISPATCHED` is immediately preceded by a `GATE_DECISION ALLOW` for that action and followed by
+`ACTION_COMPLETED`; an `OBSERVATION` precedes every decision. `DISCOVERY_ENDED` carries the
+deterministic verifier's reason and the normalized trace, which records the FILL as
+`INPUT_REF(member_id)` and observed routes as `/members/{member_id}` — literal-free by construction,
+so the persisted trace equals the in-memory one. The runtime value never appears: it is
+`<input:member_id>` in the typed value, the URL and the heading. Not persisted, by design: prompts,
+completions, provider response objects, outbound HTTP bodies, refs, the credential. The four
+provider-boundary checks (no member id in any model request or outbound body, no key in any body,
+`store: false` on every body) were verified in memory at run time and are not re-derivable from
+this file. `tests/evals/test_e01_evidence.py` re-runs the file audit in the normal suite; the run
+was produced by `CUA_LIVE_API=1 CUA_EVIDENCE_ROOT=evidence uv run pytest tests/evals -m live_api`.
+
+Intervention runs will sit beside these under `interventions/` once the HITL milestone lands.

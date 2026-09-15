@@ -8,6 +8,7 @@ This package exports only the driver-neutral contract. ``PlaywrightSurface`` liv
 ``import cua.surface`` never loads Playwright.
 """
 
+from cua.surface.aria import CONTENT_ROLES
 from cua.surface.contract import (
     SURFACE_ACTION_TYPES,
     ActResult,
@@ -25,6 +26,7 @@ from cua.surface.contract import (
 from cua.surface.query import find
 
 __all__ = [
+    "CONTENT_ROLES",
     "SURFACE_ACTION_TYPES",
     "ActResult",
     "DispatchListener",

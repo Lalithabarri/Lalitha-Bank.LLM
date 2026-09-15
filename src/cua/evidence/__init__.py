@@ -8,34 +8,46 @@ Implemented at ARCHITECTURE §15 step 9: the typed, versioned ``EvidenceEvent`` 
 ``EvidenceStore``'s layout; and the ``EvidenceRecorder`` that the Surface (``DispatchListener``)
 and the ActionGate (``GateObserver``) notify. Screenshots are deferred to the HITL milestone
 (pixel redaction cannot yet be guaranteed); the failure event carries a redacted observation
-summary instead.
+summary instead. Vocabulary 1.1 (step 10–12) adds the discovery run kind and its four events.
 
 The evidence layer is observational. It never authorizes, dispatches, retries, or influences a
-replay decision; if it cannot record, it raises ``EvidenceError`` — its own failure domain — and
-the caller stops without repeating anything.
+replay or discovery decision; if it cannot record, it raises ``EvidenceError`` — its own failure
+domain — and the caller stops without repeating anything.
 """
 
 from cua.evidence.events import (
     EVIDENCE_SCHEMA_VERSION,
     PAYLOAD_MODELS,
+    SUPPORTED_SCHEMA_VERSIONS,
     ActionCompletedPayload,
     ActionDispatchedPayload,
     ActionFailedPayload,
     BusinessOutcomePayload,
+    DecisionSummary,
+    DiscoveryEndedPayload,
+    DiscoveryStartedPayload,
     EventType,
     EvidenceError,
     EvidenceEvent,
     FailureSummary,
     GateDecisionPayload,
+    ModelCallPayload,
+    ObservationPayload,
     ObservationSummary,
+    OutcomeCandidateSummary,
     OutcomeSummary,
     Payload,
     RunKind,
     RunStartedPayload,
     RunTerminalPayload,
+    SemanticTargetSummary,
     Severity,
     StepSummary,
+    StopDetailSummary,
     TargetSummary,
+    TraceStepSummary,
+    TraceSummary,
+    ValidationSummary,
 )
 from cua.evidence.recorder import EvidenceRecorder, SinkOpener
 from cua.evidence.redaction import (
@@ -62,10 +74,14 @@ __all__ = [
     "PAYLOAD_MODELS",
     "REDACTED",
     "SENSITIVE_KEY_SUFFIXES",
+    "SUPPORTED_SCHEMA_VERSIONS",
     "ActionCompletedPayload",
     "ActionDispatchedPayload",
     "ActionFailedPayload",
     "BusinessOutcomePayload",
+    "DecisionSummary",
+    "DiscoveryEndedPayload",
+    "DiscoveryStartedPayload",
     "EventType",
     "EvidenceError",
     "EvidenceEvent",
@@ -75,17 +91,25 @@ __all__ = [
     "FailureSummary",
     "GateDecisionPayload",
     "JsonlEvidenceWriter",
+    "ModelCallPayload",
+    "ObservationPayload",
     "ObservationSummary",
+    "OutcomeCandidateSummary",
     "OutcomeSummary",
     "Payload",
     "Redactor",
     "RunKind",
     "RunStartedPayload",
     "RunTerminalPayload",
+    "SemanticTargetSummary",
     "Severity",
     "SinkOpener",
     "StepSummary",
+    "StopDetailSummary",
     "TargetSummary",
+    "TraceStepSummary",
+    "TraceSummary",
+    "ValidationSummary",
     "event_types",
     "redacted_form",
 ]

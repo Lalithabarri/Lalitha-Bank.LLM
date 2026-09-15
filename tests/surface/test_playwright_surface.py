@@ -512,3 +512,15 @@ def test_unknown_ref_produces_no_dispatch_notification(listening_surface, live_b
         surface.act(SurfaceAction(action_type=ActionType.CLICK, ref="e999"))
     assert listener.names == []
     assert surface.dispatched_actions == 1
+
+
+# --- Milestone 6: the discovery loop's first observation ------------------------------------------
+
+
+def test_a_fresh_surface_observes_a_blank_page_before_any_navigation(surface):
+    """Discovery observes before it acts (replay never does): a blank page is a valid, empty
+    observation — url ``about:blank``, no elements, no outline — not a reader error."""
+    snapshot = surface.observe()
+    assert snapshot.url == "about:blank"
+    assert snapshot.elements == [] and snapshot.visible_text_outline == ""
+    assert snapshot.step_index == 1 and surface.last_observe_driver_calls == 2

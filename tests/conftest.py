@@ -1,3 +1,5 @@
+import os
+import socket
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -7,6 +9,38 @@ from werkzeug.serving import BaseWSGIServer, make_server
 
 from legacy_bank import create_app
 from legacy_bank.faults import FaultMode
+
+# --- Milestone 6: the normal suite makes zero network calls -------------------------------------
+
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+class NetworkAccessRefused(RuntimeError):
+    pass
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_external_network():
+    """Every socket connection from the test process must stay on loopback (the in-process
+    Legacy Bank). A provider call from a test — even by mistake — fails loudly here. The live
+    E01 proof opts out explicitly with ``CUA_LIVE_API=1``."""
+    if os.environ.get("CUA_LIVE_API") == "1":
+        yield
+        return
+    original = socket.socket.connect
+
+    def guarded(self, address):
+        host = address[0] if isinstance(address, tuple) else None
+        if isinstance(host, str) and host not in _LOOPBACK:
+            raise NetworkAccessRefused(f"test tried to reach {host!r}; the suite is offline")
+        return original(self, address)
+
+    socket.socket.connect = guarded  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        socket.socket.connect = original  # type: ignore[method-assign]
+
 
 # --- Milestone 1: Flask test client fixtures ---------------------------------------------------
 

@@ -19,7 +19,13 @@ written — not even a ``RUN_FAILED`` describing the evidence failure. The in-me
 carries that story instead.
 
 Runtime inputs are used for exactly one thing: registering their values with the ``Redactor`` as
-``input:<name>`` placeholders. Only their names are persisted.
+``input:<name>`` placeholders. Only their names are persisted. Registration happens inside
+``begin_run`` — before the first event that could carry runtime state is written — so a value
+cannot leak through an early observation or model-call summary.
+
+Discovery (vocabulary 1.1) uses the same recorder: ``begin_run`` with a ``DiscoveryStartedPayload``
+and no artifact id, ``observation`` / ``model_call`` for the loop's own events, and
+``discovery_ended`` as the terminal event. The gate and the surface notify it exactly as in replay.
 """
 
 from __future__ import annotations
@@ -35,10 +41,14 @@ from cua.evidence.events import (
     ActionDispatchedPayload,
     ActionFailedPayload,
     BusinessOutcomePayload,
+    DiscoveryEndedPayload,
+    DiscoveryStartedPayload,
     EventType,
     EvidenceError,
     EvidenceEvent,
     GateDecisionPayload,
+    ModelCallPayload,
+    ObservationPayload,
     RunKind,
     RunStartedPayload,
     RunTerminalPayload,
@@ -63,7 +73,7 @@ class _ActiveRun:
     run_id: str
     run_kind: RunKind
     session_id: str
-    artifact_id: str
+    artifact_id: str | None
     sink: EvidenceSink
     seq: int = 0
     step_id: str | None = None
@@ -119,15 +129,19 @@ class EvidenceRecorder:
         run_id: str,
         run_kind: RunKind,
         session_id: str,
-        artifact_id: str,
+        artifact_id: str | None,
         inputs: Mapping[str, str],
-        payload: RunStartedPayload,
+        payload: RunStartedPayload | DiscoveryStartedPayload,
     ) -> None:
-        """Open the run's sink and write ``RUN_STARTED``. Raises ``EvidenceError`` on failure."""
+        """Open the run's sink and write the started event. Raises ``EvidenceError`` on failure.
+
+        The runtime inputs are registered with the redactor *here*, before anything is written.
+        """
+        started = payload.kind
         if self._run is not None:
             raise EvidenceError(
                 f"run {self._run.run_id} is still being recorded; cannot begin {run_id}",
-                event_type=EventType.RUN_STARTED,
+                event_type=started,
             )
         redactor = self._redactor.with_values(
             {f"input:{name}": value for name, value in inputs.items()}
@@ -136,7 +150,7 @@ class EvidenceRecorder:
             sink = self._open_sink(run_kind, run_id, redactor)
         except EvidenceError as exc:
             if exc.event_type is None:
-                exc.event_type = EventType.RUN_STARTED
+                exc.event_type = started
             raise
         self._run = _ActiveRun(
             run_id=run_id,
@@ -145,7 +159,7 @@ class EvidenceRecorder:
             artifact_id=artifact_id,
             sink=sink,
         )
-        self._emit(EventType.RUN_STARTED, Severity.INFO, payload)
+        self._emit(started, Severity.INFO, payload)
 
     def begin_step(self, step_id: str, step_index: int) -> None:
         run = self._require_run_for_context()
@@ -173,6 +187,22 @@ class EvidenceRecorder:
     def run_failed(self, payload: RunTerminalPayload) -> None:
         """Terminal event for FAILURE; closes the run's sink."""
         self._terminal(EventType.RUN_FAILED, Severity.ERROR, payload)
+
+    # --- discovery (1.1) ---------------------------------------------------------------------
+
+    def observation(self, payload: ObservationPayload) -> None:
+        self._emit(EventType.OBSERVATION, Severity.INFO, payload)
+
+    def model_call(self, payload: ModelCallPayload) -> None:
+        severity = Severity.INFO if payload.outcome == "DECISION" else Severity.WARNING
+        if payload.validation is not None and payload.validation.status != "VALID":
+            severity = Severity.WARNING
+        self._emit(EventType.MODEL_CALL, severity, payload)
+
+    def discovery_ended(self, payload: DiscoveryEndedPayload) -> None:
+        """Terminal event for every discovery stop reason; closes the run's sink."""
+        severity = Severity.INFO if payload.goal_satisfied else Severity.WARNING
+        self._terminal(EventType.DISCOVERY_ENDED, severity, payload)
 
     def end_run(self) -> None:
         """Release the run. Idempotent; never raises ``EvidenceError``.
@@ -261,7 +291,10 @@ class EvidenceRecorder:
         return self._run
 
     def _terminal(
-        self, event_type: EventType, severity: Severity, payload: RunTerminalPayload
+        self,
+        event_type: EventType,
+        severity: Severity,
+        payload: RunTerminalPayload | DiscoveryEndedPayload,
     ) -> None:
         run = self._require_run_for_context()
         run.step_id = None

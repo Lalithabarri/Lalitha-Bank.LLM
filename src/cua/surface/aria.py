@@ -46,8 +46,9 @@ STRUCTURAL_ROLES = frozenset(
 )
 
 # Roles whose accessible name *is* their content; ``value`` mirrors it so a READ target is
-# expressed the same way whether the content came from a name or from trailing text.
-_CONTENT_ROLES = frozenset({"cell", "rowheader", "columnheader"})
+# expressed the same way whether the content came from a name or from trailing text. Public:
+# discovery drops the name from a durable target of these roles (the name is the value read).
+CONTENT_ROLES = frozenset({"cell", "rowheader", "columnheader"})
 
 _OUTLINE_ROLES = frozenset({"heading", "caption", "alert", "status", "paragraph", "banner"})
 
@@ -178,7 +179,7 @@ def value_for(node: AriaNode) -> str | None:
         return selected if selected is not None else node.text
     if node.text is not None:
         return node.text
-    if node.role in _CONTENT_ROLES:
+    if node.role in CONTENT_ROLES:
         return node.name
     return None
 

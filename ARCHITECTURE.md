@@ -369,3 +369,15 @@ produce an artifact the already-proven replay engine can execute.
 
 Correctness and evals outrank UI polish at every step.
 
+---
+
+## Amendments
+
+**A1 (Milestone 6, 2026-09-15) — implemented V1 LLM provider.** The implemented V1 provider is
+OpenAI (Responses API, strict Structured Outputs, `store=False`, zero transport retries) per
+ENGINEERING_DECISIONS D24, which supersedes D06 for the implementation. Every historical
+"Gemini" reference in this document — the §2 diagram, §3 `llm/` row, §4 and §5 discovery
+flow, the §10 E01 row and §15 steps 10–12 — now reads as the provider-neutral `LLMClient` seam
+with OpenAI as the current adapter. The architecture, the discovery flow, the stop vocabulary,
+the evidence requirements and the provider-neutral seam are otherwise unchanged. This does not
+claim OpenAI was measured superior to Gemini; no comparison was run.

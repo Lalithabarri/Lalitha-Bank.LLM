@@ -98,7 +98,7 @@ class ScriptedSurface:
         self._refs_valid = True
         self._step_index += 1
         return SurfaceSnapshot(
-            url=f"{self.base_url}{self.path}",
+            url=self._url(),
             page_title=TITLES.get(self.path, self.path),
             step_index=self._step_index,
             elements=elements,
@@ -191,7 +191,9 @@ class ScriptedSurface:
         self._refs_valid = False
 
     def _url(self) -> str:
-        return f"{self.base_url}{self.path}"
+        # Before the first NAVIGATE the page is blank, as in a fresh browser (discovery observes
+        # it; replay never does because its first step navigates).
+        return "about:blank" if self.path == "about:blank" else f"{self.base_url}{self.path}"
 
     def _click(self, element: SurfaceElement) -> None:
         if not self.click_navigates:
@@ -206,6 +208,8 @@ class ScriptedSurface:
                 self.not_found_for = member_id
 
     def _page_text(self) -> str:
+        if self.path == "about:blank":
+            return ""  # a blank page has no accessibility tree
         if self.path == "/members/search" and self.not_found_for is not None:
             return fixture_text("F_not_found").replace("M404", self.not_found_for)
         try:

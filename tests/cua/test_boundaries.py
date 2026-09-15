@@ -6,6 +6,9 @@ Milestone 3: policy/artifact/hitl are driver-free; ActionGate is the only caller
 Milestone 4: replay/ is driver-free and LLM-free; ReplayDeps has no slot for a model.
 Milestone 5: evidence/ is driver-free and LLM-free; disk writes happen only in the artifact store
 and the evidence writer; no evidence payload can hold a ref.
+Milestone 6: the OpenAI SDK is confined to one adapter under llm/; discovery/ never calls
+Surface.act and never catches broadly; importing any deterministic layer — or cua.discovery /
+cua.llm themselves — loads no provider SDK; DiscoveryDeps is the only deps type with a model slot.
 """
 
 import ast
@@ -34,12 +37,15 @@ ARCHITECTURE_MODULES = [
     "domain",
 ]
 
-# Never importable from anywhere in cua. ``google`` covers the Gemini SDK until step 10 gives
-# llm/ its own, narrower rule.
+# Never importable from anywhere in cua. ``google`` (the Gemini SDK, D06) stays forbidden: the
+# implemented V1 provider is OpenAI (D24), confined to one adapter by OPENAI_ALLOWED below.
 FORBIDDEN_ANYWHERE_IN_CUA = {"legacy_bank", "flask", "google"}
 
 # The one file allowed to import the browser driver (ARCHITECTURE §4, D05).
 PLAYWRIGHT_ALLOWED = {"surface/playwright_surface.py"}
+
+# The one file allowed to import the OpenAI SDK (ARCHITECTURE §4, D24).
+OPENAI_ALLOWED = {"llm/openai_client.py"}
 
 # Driver-neutral modules whose *annotations* must not name a Playwright type either.
 DRIVER_NEUTRAL_MODULES = [
@@ -76,6 +82,19 @@ DRIVER_NEUTRAL_MODULES = [
     "evidence/redaction.py",
     "evidence/writer.py",
     "evidence/recorder.py",
+    "llm/__init__.py",
+    "llm/contract.py",
+    "llm/prompt.py",
+    "llm/openai_client.py",
+    "discovery/__init__.py",
+    "discovery/agent.py",
+    "discovery/goal.py",
+    "discovery/observation.py",
+    "discovery/result.py",
+    "discovery/summaries.py",
+    "discovery/templating.py",
+    "discovery/trace.py",
+    "discovery/validator.py",
 ]
 
 # The only files in cua that may write to disk (ARCHITECTURE §10: no ad-hoc writes; D19).
@@ -96,7 +115,8 @@ LLM_FREE_ROOTS = [
     "cua.replay",
     "cua.evidence",
 ]
-LLM_MODULE_PREFIXES = ("cua.llm", "google", "cua.discovery")
+LLM_MODULE_PREFIXES = ("cua.llm", "google", "openai", "cua.discovery")
+SDK_PREFIXES = ("google", "openai")
 
 PLAYWRIGHT_TYPE_NAMES = {
     "Page",
@@ -235,7 +255,7 @@ def test_surface_act_is_called_only_from_the_action_gate():
 
 
 def _cua_imports_of(module_name: str) -> set[str]:
-    """Fully qualified cua-internal (and google) modules imported by ``module_name``."""
+    """Fully qualified cua-internal (and provider SDK) modules imported by ``module_name``."""
     spec = importlib.util.find_spec(module_name)
     assert spec and spec.origin, module_name
     tree = ast.parse(Path(spec.origin).read_text())
@@ -245,7 +265,7 @@ def _cua_imports_of(module_name: str) -> set[str]:
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module)
-    return {m for m in found if m.startswith("cua") or m.startswith("google")}
+    return {m for m in found if m.startswith("cua") or m.startswith(SDK_PREFIXES)}
 
 
 def _transitive_cua_imports(root: str) -> set[str]:
@@ -256,7 +276,7 @@ def _transitive_cua_imports(root: str) -> set[str]:
         if module in seen:
             continue
         seen.add(module)
-        if module.startswith("google"):
+        if module.startswith(SDK_PREFIXES):
             continue
         stack.extend(_cua_imports_of(module))
     return seen
@@ -289,7 +309,7 @@ def test_replay_deps_has_no_field_that_could_hold_a_model():
 
 def test_replay_never_reaches_playwright_or_the_llm_layer_transitively():
     reached = _transitive_cua_imports("cua.replay")
-    assert not {m for m in reached if m.startswith(("cua.llm", "cua.discovery", "google"))}
+    assert not {m for m in reached if m.startswith(LLM_MODULE_PREFIXES)}
     assert "cua.surface.playwright_surface" not in reached
     for module in reached:
         if module.startswith("cua"):
@@ -320,7 +340,8 @@ def test_importing_replay_does_not_load_playwright_or_an_llm_sdk():
 
     code = (
         "import sys, cua.replay; "
-        "print(sorted(m for m in sys.modules if m.startswith(('playwright', 'google', 'cua.llm'))))"
+        "print(sorted(m for m in sys.modules "
+        "if m.startswith(('playwright', 'google', 'openai', 'cua.llm', 'cua.discovery'))))"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
@@ -359,7 +380,7 @@ def test_disk_writes_happen_only_in_the_artifact_store_and_the_evidence_writer()
 
 def test_evidence_never_reaches_playwright_or_the_llm_layer_transitively():
     reached = _transitive_cua_imports("cua.evidence")
-    assert not {m for m in reached if m.startswith(("cua.llm", "cua.discovery", "google"))}
+    assert not {m for m in reached if m.startswith(LLM_MODULE_PREFIXES)}
     assert "cua.surface.playwright_surface" not in reached
     assert "cua.replay" not in {
         m.split(".engine")[0] for m in reached
@@ -378,7 +399,7 @@ def test_importing_evidence_does_not_load_playwright_or_an_llm_sdk():
     code = (
         "import sys, cua.evidence; "
         "print(sorted(m for m in sys.modules "
-        "if m.startswith(('playwright', 'google', 'cua.llm', 'cua.replay'))))"
+        "if m.startswith(('playwright', 'google', 'openai', 'cua.llm', 'cua.replay'))))"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
@@ -419,3 +440,151 @@ def test_the_recorder_is_the_only_evidence_object_the_engine_gate_and_surface_sh
         }
         assert not any(m.startswith("cua.evidence") for m in modules), (relative, modules)
         assert "cua" in imported
+
+
+# --- Milestone 6 -------------------------------------------------------------------------------
+
+
+def test_openai_is_imported_only_by_the_provider_adapter():
+    importers = {
+        str(path.relative_to(CUA_ROOT))
+        for path in _cua_files()
+        if "openai" in _imported_roots(path)
+    }
+    assert importers == OPENAI_ALLOWED, importers
+
+
+def test_llm_package_init_never_imports_the_adapter():
+    """``import cua.llm`` must stay SDK-free; a composition root imports the adapter explicitly."""
+    modules = {
+        node.module
+        for node in ast.walk(ast.parse((CUA_ROOT / "llm" / "__init__.py").read_text()))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert "cua.llm.openai_client" not in modules
+
+
+def test_discovery_contains_no_act_call_and_no_broad_except():
+    for name in ("agent", "validator", "observation", "goal", "summaries", "trace", "result"):
+        path = CUA_ROOT / "discovery" / f"{name}.py"
+        assert _act_call_sites(path) == [], name
+        tree = ast.parse(path.read_text())
+        broad = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ExceptHandler)
+            and (
+                node.type is None
+                or (
+                    isinstance(node.type, ast.Name)
+                    and node.type.id in {"Exception", "BaseException"}
+                )
+            )
+        ]
+        assert broad == [], (name, broad)
+
+
+def test_discovery_reaches_llm_but_only_pure_replay_modules():
+    """discovery -> llm is the one permitted edge to the model layer; discovery may use replay's
+    pure binding/transform helpers but never its engine, resolver or results."""
+    reached = _transitive_cua_imports("cua.discovery")
+    assert "cua.llm" in reached or "cua.llm.contract" in reached
+    assert "cua.replay.engine" not in reached
+    assert "cua.replay.resolver" not in reached
+    assert "cua.replay.result" not in reached
+    assert "cua.surface.playwright_surface" not in reached
+    assert not {m for m in reached if m.startswith(SDK_PREFIXES)}
+
+
+def test_llm_contract_and_prompt_reach_no_sdk_no_surface_no_discovery():
+    """The contract reuses artifact value-binding types (D12) — and through them the policy risk
+    vocabulary — but never the surface, the discovery loop, or a provider SDK."""
+    for module in ("cua.llm", "cua.llm.contract", "cua.llm.prompt"):
+        reached = _transitive_cua_imports(module)
+        assert not {m for m in reached if m.startswith(("cua.discovery", "cua.surface"))}, module
+        assert not {m for m in reached if m.startswith(SDK_PREFIXES)}, module
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "cua.replay",
+        "cua.artifact",
+        "cua.policy",
+        "cua.surface.contract",
+        "cua.evidence",
+        "cua.discovery",
+        "cua.llm",
+    ],
+)
+def test_importing_a_layer_does_not_load_a_provider_sdk(module):
+    import subprocess
+    import sys
+
+    code = (
+        f"import sys, {module}; "
+        "print(sorted(m for m in sys.modules if m.startswith(('openai', 'google'))))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", (module, out.stdout)
+
+
+def test_discovery_deps_is_the_only_deps_type_with_a_model_slot():
+    from cua.discovery import DiscoveryDeps
+    from cua.replay import ReplayDeps
+
+    assert set(DiscoveryDeps.__dataclass_fields__) == {
+        "surface",
+        "action_gate",
+        "clock",
+        "evidence",
+        "llm",
+    }
+    assert set(ReplayDeps.__dataclass_fields__) == {"surface", "action_gate", "clock", "evidence"}
+
+
+def test_no_discovery_evidence_payload_can_hold_a_ref_or_a_snapshot():
+    from cua.evidence import (
+        DecisionSummary,
+        DiscoveryEndedPayload,
+        DiscoveryStartedPayload,
+        ModelCallPayload,
+        ObservationPayload,
+        TraceStepSummary,
+        TraceSummary,
+    )
+
+    forbidden = {
+        "ref",
+        "refs",
+        "element",
+        "elements",
+        "snapshot",
+        "locator",
+        "page",
+        "prompt",
+        "completion",
+        "response",
+        "messages",
+        "reasoning",
+    }
+    for model in (
+        DiscoveryStartedPayload,
+        ObservationPayload,
+        ModelCallPayload,
+        DecisionSummary,
+        DiscoveryEndedPayload,
+        TraceStepSummary,
+        TraceSummary,
+    ):
+        assert not set(model.model_fields) & forbidden, model.__name__
+
+
+def test_the_action_gate_is_still_the_only_production_caller_of_act_after_discovery():
+    """Explicit restatement for the safety gate: discovery/ appears in no caller set."""
+    callers = {
+        str(path.relative_to(CUA_ROOT))
+        for path in _cua_files()
+        if not str(path.relative_to(CUA_ROOT)).startswith("surface/") and _act_call_sites(path)
+    }
+    assert callers == {"policy/action_gate.py"}
