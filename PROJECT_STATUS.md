@@ -12,27 +12,33 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 5 — COMPLETE: evidence + redaction foundation.**
-Typed, versioned `EvidenceEvent` envelope (vocabulary 1.0: RUN_STARTED, GATE_DECISION,
-ACTION_DISPATCHED, ACTION_COMPLETED, ACTION_FAILED, BUSINESS_OUTCOME, RUN_COMPLETED, RUN_FAILED);
-deterministic `Redactor` (key / URL / ref / known-value rules); append-only, fsync-per-event
-`JsonlEvidenceWriter` behind `EvidenceStore`'s `evidence/<run_kind>/<run_id>/events.jsonl`
-layout; `EvidenceRecorder` as the one object the Surface (`DispatchListener`), the ActionGate
-(`GateObserver`) and the engine (`ReplayDeps.evidence`) share. `ACTION_DISPATCHED` is persisted
-at the Surface boundary immediately before the driver call. Evidence failure is its own domain
-(`FailureCode.EVIDENCE_ERROR`), fails closed, never repeats an action, and never writes again for
-that run. Every M4 result is unchanged. 563 tests passed (32 real-Chromium); ruff clean; no new
-dependency. Committed as `70e053e`, pushed to `origin/main`.
+**Milestone 6 — COMPLETE: provider-neutral LLMClient + OpenAI discovery + official E01.**
+Provider-neutral `LLMClient` (`DiscoveryRequest -> DecisionReply`, closed ACT | FINISH |
+REPORT_BLOCKED vocabulary); `OpenAIResponsesClient` (Responses API, `responses.parse` with a strict
+Pydantic schema, `store=False`, transport retries fixed at 0, credential from `OPENAI_API_KEY` only,
+the one importer of the SDK); model-safe observations (known runtime inputs templated to
+`<input:name>` before any request); deterministic `DecisionValidator` with the ambiguity guard and a
+narrow model-navigation allowlist; deterministic `ReadSavingsBalanceVerifier`; literal-free
+`NormalizedTrace`; `DiscoveryAgent` loop with six stop reasons; evidence vocabulary 1.1. **Official
+E01 = `evidence/discovery/run_e49e4d0cbe09`**: `gpt-5.6-sol`, first live masked attempt, 23/23
+MUST-PASS, 5 model calls, 0 corrective retries, 4 dispatched actions, `GOAL_REACHED`,
+`Decimal("15275.00")`; `M1001` absent from the persisted evidence and from every real provider
+request body; `store=False`; transport retries 0; ActionGate sole authority; normalized trace
+produced; **no `CapabilityArtifact` compiled yet.** 779 tests passed (33 real-Chromium) + 1 live
+skip; ruff clean. Committed as `6eb1ddb`, pushed to `origin/main`.
+
+Milestone 5 is COMPLETE: committed as `70e053e`, pushed to `origin/main`.
 
 Milestone 4 is COMPLETE: committed as `2386eab`, pushed to `origin/main`.
 Milestone 3A is COMPLETE: committed as `057d1d7`, pushed to `origin/main`.
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next milestone: **Milestone 6 — `LLMClient` + structured action output, then
-`DiscoveryAgent` + normalized trace and the E01 genuine live discovery** (ARCHITECTURE §15 steps
-10–12). Evidence deliberately precedes genuine discovery (step 9 < 10) so that the first real E01
-run is captured, from its first action, by an evidence layer that was already proven on replay.
+Active next milestone: **Milestone 7 — `ArtifactCompiler` + E02** (ARCHITECTURE §15 steps 13–14):
+the official E01 `NormalizedTrace` → deterministic compiler → generated `CapabilityArtifact`
+(invariants I1–I6, `compile_report.json`) → replay of the *generated* artifact on M1002 → correct
+`Decimal` savings balance with zero model decisions. The generated artifact must not be the
+handwritten M4 artifact.
 
 ## Completed milestones
 
@@ -538,6 +544,117 @@ trusted on deterministic replay, not by one written afterwards around a model ru
   `tests/replay/test_replay_live.py` (on-disk chronology in real Chromium),
   `tests/cua/test_boundaries.py` (M5 section), `evidence/replay/*/events.jsonl`.
 
+### Milestone 6 — Provider-neutral `LLMClient` · OpenAI discovery · normalized trace · official E01
+
+Maps to ARCHITECTURE §15 steps 10–12. The one milestone with a model in the loop; the deterministic
+core (M1–M5) was frozen before it started and is byte-identical afterwards except for the additive
+evidence vocabulary.
+
+- **Goal:** a genuine, live, bounded observe → decide → validate → gate → act → observe discovery of
+  `read_savings_balance(member_id)` by a real model, under the existing policy gate, captured by the
+  existing evidence layer, producing a literal-free normalized trace — and the non-negotiable E01.
+- **Decisions applied:** D08 (closed action vocabulary; `WAIT` deliberately not admitted), D09/D10
+  (the decision has no risk field; `declared_risk=None` at dispatch; the gate classifies alone), D12
+  (`INPUT_REF | LITERAL` reused as the decision's value binding), D19 (redaction before disk; bound
+  inputs registered at `begin_run`), **D24** (OpenAI adapter, supersedes D06 for the implementation;
+  D06 retained verbatim), ARCHITECTURE §5 (stop reasons `GOAL_REACHED | MAX_STEPS | TIMEOUT |
+  DEAD_END | BLOCKED_BY_POLICY | MODEL_ERROR`; 25 steps / 5 min; one corrective retry), amendment A1.
+  **Session decisions (approved with the plan and amendments A1–A9):** two representations of every
+  observation — the RAW `SurfaceSnapshot` stays local (validator, gate, verifier, digest, binding)
+  and a **model-safe** `Observation` with every known bound input value templated to `<input:name>`
+  (whole path segment / whole token) is the only thing a request is built from, with a self-check
+  that fails loudly if a value survives; `DiscoveryConfig.navigation_routes` is a narrow entry-route
+  list (`/members/search` only for E01) shown to the model and enforced by the validator *before* the
+  gate, asserted to be a subset of the policy allowlist at composition; SDK transport retries are
+  fixed at 0 so one `MODEL_CALL` event is one HTTP attempt; `DiscoveryConfig.mask_bound_inputs`
+  defaults to `True` and is recorded in `DISCOVERY_STARTED` (a `False` run is DIAGNOSTIC, never E01);
+  the ambiguity guard resolves the descriptor that will be persisted (name dropped for content
+  roles) against the current observation and requires exactly one match — refused twice it is
+  `DEAD_END/AMBIGUOUS_TARGET`, a UI property, not a model error; `REQUIRE_INTERVENTION` stops as
+  `BLOCKED_BY_POLICY` with the gate decision recorded until step 16 suspends; the terminal evidence
+  write failing after a verified success returns `DEAD_END/EVIDENCE_ERROR` with outputs discarded
+  (A4); `discovery -> replay.{binding,transforms}` is a deliberate edge to pure leaf modules only;
+  the prompt carries the A5 injection notice as defence in depth only.
+- **What was implemented:** `cua/llm/{contract,prompt,openai_client}.py`; `cua/discovery/{templating,
+  observation,goal,validator,trace,result,summaries,agent}.py`; evidence vocabulary 1.1
+  (`RunKind.DISCOVERY`; `DISCOVERY_STARTED`, `OBSERVATION`, `MODEL_CALL`, `DISCOVERY_ENDED`; earlier
+  versions stay readable); `surface.CONTENT_ROLES` made public; `openai==3.14.0` (official SDK only).
+  Tests: `tests/llm/` (contract, prompt, adapter over `httpx2.MockTransport` including the
+  provider-boundary privacy proof), `tests/discovery/` (fakes, agent, evidence, ambiguity, validator,
+  goal, observation, templating, trace), `tests/evals/` (E01 runner/audit, live test, offline audit of
+  the official run), boundary M6 section, `openai` in the zero-model guard, a loopback-only socket
+  guard for the whole suite (`CUA_LIVE_API=1` opts out), one browser test (blank-page observation).
+- **Actual verification performed:** `uv run pytest -q` (779 passed + 1 live skip); `uv run pytest -m
+  browser -q` (33); `ruff check` + `ruff format --check` (121 files); `git diff --check`; grep for
+  `.act(` in `src/cua` (one call: `policy/action_gate.py:154`); `openai` imported only by
+  `llm/openai_client.py`; fresh-interpreter zero-model live replay under a guard that also forbids
+  `openai` (SUCCESS, nothing forbidden loaded or attempted, 14 events, no member id); subprocess
+  import of replay/artifact/policy/surface.contract/evidence/discovery/llm loads no provider SDK;
+  **preflight** — one real `responses.parse` request through the production adapter on a neutral
+  blank-page request (model reported `gpt-5.6-sol`, response id present, 1120/72 tokens, 3.8 s);
+  **one live discovery** — `CUA_LIVE_API=1 CUA_EVIDENCE_ROOT=evidence uv run pytest tests/evals -m
+  live_api` with the real Legacy Bank on `:8000` (so `policy/legacy_bank.json` applied verbatim),
+  real headless Chromium, real gate, real recorder, real adapter, masking on, entry route only; the
+  file audit re-run on the persisted run (no `M1001`, no `"ref"` key, no ref-shaped token, no
+  credential/header, no prompt/completion, no outbound body, no absolute path, no user/host name;
+  seq contiguous; one session; schema 1.1; every line redacted).
+- **Test/eval results:** 779 passed, 1 skipped (M1–M5 563 unchanged except one deliberate pin —
+  `schema_version` `"1.0"` → `"1.1"` in `test_events.py`, plus a new test that 1.0 lines stay
+  readable; new: llm 54, discovery 126, evals 4 offline + 1 live, boundaries +25, offline guard 2,
+  surface +1). **Official E01 = `run_e49e4d0cbe09`** (first masked attempt, not rerun): `gpt-5.6-sol`
+  requested and reported; 5 `MODEL_CALL` events with distinct `resp_…` ids, all `DECIDE`/`VALID`, 0
+  corrective retries; sequence NAVIGATE `/members/search` → FILL textbox "Member ID" ←
+  `INPUT_REF(member_id)` → CLICK button "Search" → READ cell in `table: Accounts > row: Savings`
+  (`identity_matches 1`, `input_evidence ROUTE`) → FINISH; gate ALLOW ×4 (SAFE_READ,
+  REVERSIBLE_WRITE, SAFE_READ, SAFE_READ), 4 dispatched, 5 observations; `GOAL_REACHED` /
+  `GOAL_VERIFIED`; `savings_balance = Decimal("15275.00")` == seed oracle (test only); 23/23
+  MUST-PASS including: `M1001` absent from the persisted evidence, from all 5 model requests and from
+  all 5 real outbound HTTP bodies (inspected in memory only, never persisted), key absent from every
+  body, `store: false` on every body, `mask_bound_inputs: true`; 8,524/408 tokens, 13.0 s model
+  latency, 13.9 s wall. Path-specific behaviour is recorded as metrics, not asserted.
+- **Bugs or incorrect assumptions discovered:** (1) the plan's `assert_navigation_routes_within_policy`
+  test assumed `/members/{member_id}` would not cover `/members/search` — a `{param}` pattern matches
+  any segment, so the subset check and the gate both accept it (test rewritten with a route of a
+  different length; no production change); (2) `ScriptedSurface` reported `http://fake.testabout:blank`
+  before its first NAVIGATE — never observed by replay (which navigates first); fixed to `about:blank`
+  with an empty tree, matching what real Chromium reports (pinned by a browser test); (3) a test-side
+  eager dict evaluated every scripted turn at once; (4) the "no balance constant" scan first covered
+  `src/legacy_bank` (where the seed legitimately lives) — narrowed to `src/cua`. No production defect
+  was found by the live run; the model's first attempt satisfied every invariant.
+- **Fixes made:** the four above (three test-side, one test-fake); no production change after the
+  first green unit run.
+- **Remaining limitations:** no `CapabilityArtifact` is compiled (step 13); no CLI (`discover` is
+  driven from `tests/evals`); `REQUIRE_INTERVENTION` ends discovery instead of suspending (step 16);
+  no screenshots; `WAIT` not admitted; whole-token masking leaves a value embedded in a larger token
+  visible to the model (documented; the request self-check uses the same rule); zero transport
+  retries mean a transient 429/5xx aborts an attempt as `MODEL_ERROR` (rerun; attempts recorded);
+  the four provider-boundary invariants are verifiable only at run time (nothing from the boundary is
+  persisted, by design); the synthetic seed name appears in persisted outline excerpts (the M5
+  documented limit); `openai` 3.x ships against `httpx2`, which the mock tests are written for.
+- **Git commit:** `6eb1ddb` — feat: add bounded OpenAI discovery with verified live E01 (pushed to
+  `origin/main`), including the official E01 evidence, D24, ARCHITECTURE amendment A1 and the
+  evidence README.
+- **Presentation/pitch takeaway:** the model proposed every step and saw the live UI, yet never saw
+  the member id, never chose a risk, never bypassed the gate, and never established success itself —
+  deterministic code validated each decision on the exact observation it answered, the gate
+  authorized each action, the verifier judged the trace, and the evidence shows five real provider
+  calls with `store=False`, zero retries and a literal-free trace ready for the compiler.
+
+#### Reviewer / benchmark signal
+
+- **Assignment signal:** a genuine, live, LLM-driven observe → decide → act loop with bounded
+  execution and its own API access (REQUIREMENTS §3), with evidence in `/evidence/` (§10).
+- **Reference-project lesson applied:** put every safety property in code the model cannot reach —
+  a closed output schema, a validator on the raw observation, a gate on the resolved target, a
+  verifier on the trace — and mask runtime data before the provider boundary rather than after.
+- **What our implementation improves/clarifies:** the provider is one adapter behind a
+  provider-neutral contract; one `MODEL_CALL` is one HTTP attempt; the model-safe view and the
+  persisted evidence use the same placeholder, so what the model saw equals what the reviewer reads.
+- **Proof:** `evidence/discovery/run_e49e4d0cbe09/events.jsonl`, `tests/evals/test_e01_evidence.py`,
+  `tests/evals/test_e01_live_discovery.py` (the run's own audit), `tests/llm/test_openai_client.py`
+  (wire-level settings and the provider-boundary privacy proof), `tests/discovery/*`,
+  `tests/cua/test_boundaries.py` (M6 section), `tests/cua/test_offline.py`.
+
 ## Decision corrections worth explaining
 
 | Initially proposed | Corrected to | Why it matters |
@@ -568,6 +685,10 @@ trusted on deterministic replay, not by one written afterwards around a model ru
 | Count an action as dispatched, then notify evidence | Notify (`on_dispatched`) first; only on success increment `dispatched_actions`, invalidate refs, call the driver | An action must count as attempted only once its attempt is durable; a refused notice must leave the surface untouched. A dead port after a recorded notice still counts (M4 invariant kept). |
 | Evidence failure surfaced as a flag on an otherwise successful result | `FAILURE / EVIDENCE_ERROR`, outputs dropped, one failure per run, no second write, no redispatch | "You own the proof": a run whose proof cannot be written is not proven; and an evidence failure must never become a reason to act again, nor recurse into writing about itself. |
 | Redact the whole event | Redact the `payload` only | Envelope fields are system-generated identifiers and enums; rewriting them could corrupt the chronology key or the discriminator on an absurd input, while all observed text lives in the payload. |
+| M6 plan: show the model `policy.allowed_routes` as navigation hints | A separate `DiscoveryConfig.navigation_routes` (entry route only), validated before the gate and asserted to be a subset of policy | Handing the model the route map would make E01 prove route-following, not discovery; the gate stays the authority, the model gets the minimum needed to begin. |
+| M6 plan: bound input values never appear in a request — but the UI echoes them after a FILL | Two representations: the RAW snapshot stays local; the model sees a model-safe view with known inputs templated to `<input:name>`, plus a request self-check | An observation is live UI; without templating, the provider would receive the runtime value merely because the page displayed it. |
+| M6 plan: SDK transport retries at the default | Fixed at 0 in the adapter (`TRANSPORT_RETRIES`), not a parameter | One `MODEL_CALL` event must be one HTTP attempt; hidden retries would make the evidence undercount provider traffic. |
+| M6 plan: ambiguity refused twice → `MODEL_ERROR` (the generic rule) | `DEAD_END/AMBIGUOUS_TARGET` | Two equivalent Savings cells are a property of the UI — the same condition replay reports as `AMBIGUOUS_TARGET` — not a defect of the model's output. |
 | Engine marks every surface runtime error inside `act()` as `dispatched=True` (M4) | `dispatched` taken from the recorder's dispatch count on that path | `UnknownRefError` and a failing locator query happen *before* the driver op; the recorder is the ground truth for whether the boundary was crossed. |
 | Persist identifiers masked (`M1***`) or removed | Deterministic name-tagged placeholders (`<input:member_id>`) from the bound runtime inputs | Masking leaks; removal makes routes and alerts unreadable; the placeholder is non-reversible, deterministic, and keeps evidence useful. Unknown secrets in arbitrary prose remain a documented V1 limit rather than an implied DLP capability. |
 
@@ -632,8 +753,19 @@ trusted on deterministic replay, not by one written afterwards around a model ru
 | Disk writes exist only in `artifact/store.py` and `evidence/writer.py`; `cua.evidence` reaches neither Playwright nor an LLM layer nor `cua.replay`; no payload model has a ref/element/snapshot field; the listener/observer protocols live below evidence (no cycle) | `tests/cua/test_boundaries.py` (M5 section) |
 | The real JSONL writer runs in the zero-model fresh interpreter (scripted and live) with no forbidden module loaded and no member id in the file | `tests/replay/test_zero_model.py`, `test_replay_live.py::test_zero_model_live_replay_in_a_fresh_interpreter` |
 
-`evidence/` now holds `README.md` and four sample replay runs (L1 SUCCESS, L3 BUSINESS_OUTCOME, L4
-AMBIGUOUS_TARGET, L5a POLICY_DENIED) written by the live tests through `CUA_EVIDENCE_ROOT`.
+| A real model drove the live UI to the goal under policy (official E01): five OpenAI calls with distinct response ids, four gated dispatches, `GOAL_REACHED`, `Decimal("15275.00")` | `evidence/discovery/run_e49e4d0cbe09/events.jsonl`, `tests/evals/test_e01_evidence.py`, `tests/evals/test_e01_live_discovery.py` |
+| The provider never receives a bound runtime value: every model request and every real outbound HTTP body is model-safe; the key rides only in the auth header | `tests/llm/test_openai_client.py::test_the_actual_outbound_http_body_never_carries_the_bound_member_id`, `::test_the_agent_with_the_real_adapter_over_a_mocked_provider_reaches_the_goal`, `tests/discovery/test_agent.py::test_every_model_request_is_model_safe_across_the_whole_run`; live audit of `run_e49e4d0cbe09` (in memory) |
+| Every request carries `store: false`, a strict schema, the configured model, no `previous_response_id`, no background mode; transport retries are 0 (a 429 is one HTTP request) | `tests/llm/test_openai_client.py::test_outbound_body_uses_the_intended_model_strict_schema_and_store_false`, `::test_transport_retries_are_zero_and_a_429_is_exactly_one_http_request` |
+| Invalid decisions never reach the surface: unknown/invented/stale refs, illegal targets, literal inputs, unlisted routes, undeclared outputs and premature FINISH are rejected before the gate; one corrective retry, then `MODEL_ERROR` | `tests/discovery/test_validator.py`, `tests/discovery/test_agent.py::test_second_invalid_decision_is_model_error_with_zero_dispatch`, `::test_one_corrective_retry_then_success` |
+| Two equivalent Savings cells are never selected by ref: `DEAD_END/AMBIGUOUS_TARGET`, zero READ dispatched | `tests/discovery/test_ambiguity.py` |
+| FINISH never establishes the goal; the verifier needs a unique Savings cell READ on the requested member's page converting to Decimal | `tests/discovery/test_goal.py`, `tests/discovery/test_agent.py::test_finish_alone_never_establishes_goal_reached` |
+| Policy DENY / REQUIRE_INTERVENTION / CONTROL_NOT_OWNED stop discovery with zero dispatch; the model cannot supply a risk | `tests/discovery/test_agent.py::test_policy_deny_is_blocked_by_policy_with_zero_dispatch`, `::test_require_intervention_stops_safely_with_zero_irreversible_dispatch`, `::test_control_not_owned_denies_before_any_dispatch[*]`, `::test_the_model_cannot_supply_a_risk_and_the_gate_classifies_alone` |
+| A verified success whose terminal evidence cannot be written is returned as `DEAD_END/EVIDENCE_ERROR` with outputs dropped; nothing is redispatched or written afterwards | `tests/discovery/test_agent_evidence.py::test_terminal_evidence_failure_after_verified_success_is_not_released` and the other evidence-failure rows |
+| Bound inputs are registered with the redactor before the first state-bearing event | `tests/discovery/test_agent_evidence.py::test_bound_inputs_are_registered_before_the_first_state_bearing_event` |
+| The normal suite is offline; `openai` is confined to one adapter; replay stays zero-model under a guard that forbids `openai` | `tests/cua/test_offline.py`, `tests/cua/test_boundaries.py` (M6 section), `tests/replay/test_zero_model.py` |
+
+`evidence/` now holds `README.md`, four sample replay runs (L1 SUCCESS, L3 BUSINESS_OUTCOME, L4
+AMBIGUOUS_TARGET, L5a POLICY_DENIED) and the official E01 discovery run `discovery/run_e49e4d0cbe09`.
 
 ## Production and evolution seams
 
@@ -656,7 +788,9 @@ AMBIGUOUS_TARGET, L5a POLICY_DENIED) written by the live tests through `CUA_EVID
 | Policy config is a static JSON file with segment-wise route patterns | Tenant overlays (designed only) vary base origin and route aliases; risk/policy fields have no overlay grammar by construction |
 | Artifact validators are schema-level (I1, I2, I4, I5, I6-by-construction) | Step 13's compiler adds trace-based checks (a declared discovery input must not survive as a literal) and `compile_report.json` |
 | `KnownOutcome.terminal_status` is a string literal | Stays a literal (`artifact/` must not import `replay/`); agreement asserted by a test |
-| Evidence vocabulary 1.0: eight event types, `RunKind.REPLAY` only, no screenshots | Each addition is a `schema_version` bump; readers validate strictly, old files stay valid under their own version |
+| Evidence vocabulary 1.1: eight replay + four discovery event types, no screenshots | Each addition is a `schema_version` bump; readers validate strictly, old files stay valid under their own version |
+| `OpenAIResponsesClient` is the one provider adapter; `LLMClient` is the seam | A second adapter (Gemini, Anthropic) implements the same contract and runs the same discovery tests; D24 names the trigger |
+| `DiscoveryConfig.navigation_routes` is a hand-configured entry-route list | Tenant overlays (designed only) could vary it alongside the base origin; it can never widen policy |
 | Evidence failure = `FAILURE / EVIDENCE_ERROR`, fail closed, one failure per run | `UNKNOWN_COMMIT_STATE` (HITL milestone) reuses the same after-dispatch fact for irreversible steps |
 
 ## Current risks / unverified assumptions
