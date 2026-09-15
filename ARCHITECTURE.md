@@ -1,9 +1,9 @@
-# ARCHITECTURE FREEZE
+# ARCHITECTURE 
 
 Consolidated from approved Bundles A, B, C, D, E, F, G, H.
 No new decisions. Every line traces to an approved bundle.
 
-Status: FROZEN. Implementation may begin.
+Status: FIXED. Implementation may begin.
 Revisit only if implementation evidence proves an assumption false.
 
 ---
