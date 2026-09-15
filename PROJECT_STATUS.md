@@ -12,17 +12,21 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 3A — COMPLETE: policy + artifact foundation; deterministic runtime remains in
-progress.** ActionGate + allowlist + risk classification + ControlOwner basics; CapabilityArtifact
-schema + ArtifactStore; the handwritten `read_savings_balance@1.0.0` artifact (ARCHITECTURE §15
-steps 4–6). Passed a pre-freeze red-team review after fixing one critical and two high findings
-(recorded in the M3 entry). 259 tests passed; ruff clean; no new dependency. Committed as
-`057d1d7`, pushed to `origin/main`.
+**Milestone 4 — COMPLETE: deterministic replay core.** `TargetResolver`, binding, closed
+transforms, condition evaluator, `RunResult` with exactly three terminal statuses, `ReplayDeps`
+with no model slot, `ReplayEngine` (ARCHITECTURE §15 step 7) and the step-8 proofs against the
+real Legacy Bank in real Chromium using the unmodified checked-in artifact: M1001 →
+`Decimal("15275.00")`, M1002 → `Decimal("4120.75")`, M404 → BUSINESS_OUTCOME/MEMBER_NOT_FOUND,
+`ambiguous_savings` → FAILURE/AMBIGUOUS_TARGET with the READ never dispatched, policy denial →
+FAILURE/POLICY_DENIED with zero dispatches, zero-model replay in a fresh interpreter under an
+import guard. 429 tests passed (25 real-Chromium); ruff clean; no new dependency. Committed as
+`2386eab`, pushed to `origin/main`.
 
+Milestone 3A is COMPLETE: committed as `057d1d7`, pushed to `origin/main`.
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next milestone: **Milestone 4 — Deterministic replay core** (ARCHITECTURE §15 steps 7–8).
+Active next milestone: **Milestone 5 — EvidenceWriter + Redactor** (ARCHITECTURE §15 step 9).
 
 ## Completed milestones
 
@@ -276,6 +280,141 @@ the step-8 proofs were split into Milestone 4 so the deterministic core gets its
   `tests/cua/test_boundaries.py` (single `.act(` call site, LLM-free layers, Playwright-free
   annotations).
 
+### Milestone 4 — Deterministic replay core: TargetResolver · binding · transforms · conditions · RunResult · ReplayEngine
+
+Maps to ARCHITECTURE §15 step 7 and the step-8 proofs. The deterministic production runtime,
+proven with the handwritten artifact before any model exists.
+
+- **Goal:** execute `read_savings_balance@1.0.0` against the real UI with zero model decisions,
+  semantic target resolution that fails closed, every action through `ActionGate`, typed inputs
+  and outputs, declarative conditions, declared business outcomes, and exactly one of three
+  terminal results.
+- **Decisions applied:** D13 (ordered strategies; scope = exact `context_hint`; `text_contains`
+  over accessible name or value), D14 (detectors on every observation, before any generic
+  failure), D15 (`ReplayDeps = {surface, action_gate, clock}` — no LLM field by construction;
+  three terminal statuses; never `first()`), D16 (no automatic re-dispatch in M4; the only
+  "retries" are observation polls inside one bounded window each for resolution, postcondition,
+  and checkpoint), §7 flow, §8 gate contract (NAVIGATE authorized on the built destination
+  `action.url`; every other action on the exact snapshot the resolved ref came from).
+  **Session decisions (approved before implementation):** `FailureCode` =
+  {AMBIGUOUS_TARGET, TARGET_NOT_FOUND, POLICY_DENIED, INTERVENTION_REQUIRED, POSTCONDITION_FAILED,
+  INVALID_INPUT, TRANSFORM_ERROR, SURFACE_ERROR} — `INTERVENTION_REQUIRED` exists because the gate
+  can answer REQUIRE_INTERVENTION before HITL suspension (step 16) exists, and conflating it with
+  POLICY_DENIED would turn a hard DENY into an approval path; `RunResult` enforces only
+  self-contained invariants (SUCCESS: no outcome/failure; BUSINESS_OUTCOME: outcome, `outputs ==
+  {}`; FAILURE: failure, `outputs == {}` — partial READ values are discarded, outputs are
+  authoritative only on SUCCESS) while the engine proves `set(outputs) == declared outputs`
+  before constructing SUCCESS; `RunResult` carries no `inputs` (data minimization; redaction is
+  the EvidenceWriter's); `SurfaceDriverError(SurfaceError)` at the driver-neutral boundary with
+  `PlaywrightSurface` translating every Playwright `Error` — the engine maps only
+  `SurfaceDriverError | UnknownRefError` to SURFACE_ERROR and lets contract violations and
+  programming errors propagate (no `except Exception` anywhere in `replay/`, asserted
+  structurally); NAVIGATE destinations are built by `build_destination(origin-only base_url,
+  bound absolute path)` with segment-safe placeholder binding, never by URL joining;
+  `KnownOutcome.terminal_status` stays a string literal (agreement with `TerminalStatus`
+  asserted by test) because `artifact/` must not import `replay/`.
+- **What was implemented:** `cua/replay/{clock,result,transforms,binding,matching,conditions,
+  resolver,engine}.py` (+ exports); `cua/surface/contract.py` `SurfaceDriverError` and error
+  classification; `cua/surface/playwright_surface.py` `_driver_calls()` translation at every
+  driver call site (observe/act semantics, ref rules, and the dispatch counter unchanged);
+  `cua/domain/ids.new_run_id`; `cua/artifact/schema.py` exposes `PLACEHOLDER` (rename of the
+  private pattern, no behaviour change). Tests: `tests/replay/` (scripted fixture surface with
+  real ref discipline, recording surface, fake clock, zero-model subprocess script, unit tests
+  for every module and every terminal path, live proofs), one surface dead-port test, boundary
+  extensions. `legacy_bank/`, `policy/`, `capabilities/` untouched; no dependency change.
+- **Actual verification performed:** `uv run pytest -q` (429 passed, 9.7 s, including 25 real
+  Chromium tests); `uv run pytest -m browser -q` (25 passed); `ruff check` + `ruff format
+  --check` (79 files); grep for `.act(` in `src/cua` (one call: `policy/action_gate.py:129`);
+  grep for `float` in `transforms.py` (docstring prose only; AST test asserts no `float` name);
+  grep for broad `except` in `replay/` (none); `git diff --stat -- pyproject.toml uv.lock
+  src/legacy_bank capabilities policy` (empty); fresh-interpreter zero-model replay (scripted
+  and live) with a `sys.meta_path` guard installed before any `cua` import.
+- **Test/eval results:** 429 passed, 429 collected (M1–M3A 259 unchanged; policy +1 = 61 [the
+  committed search-click risk proof]; surface +1 = 37;
+  boundaries +14 = 55 [9 replay files in the driver-neutral list, `cua.replay` in the LLM-free
+  roots, 4 new checks]; replay 154 = result 11, transforms 38, binding 46, matching 6,
+  conditions 9, resolver 8, engine 25, zero_model 3, live 8). ruff clean. Live proofs: L1 M1001
+  SUCCESS `15275.00`; L2 M1002 SUCCESS `4120.75` (same artifact object); L3 M404
+  BUSINESS_OUTCOME/MEMBER_NOT_FOUND at `s3_search`, 3 dispatches; L4 ambiguous
+  FAILURE/AMBIGUOUS_TARGET at `s4_read_savings`, candidates `$15,275.00`/`$250.00` without refs,
+  3 dispatches, no READ; L5a empty policy → POLICY_DENIED at `s1`, 0 dispatches, 0 observations;
+  L5b READ not allowlisted → POLICY_DENIED at `s4`, 3 dispatches; L6 zero-model live replay in a
+  fresh interpreter → SUCCESS, no forbidden module loaded or attempted; L7 artifact
+  `model_dump()` identical after every run; L8 dead port → FAILURE/SURFACE_ERROR at `s1`,
+  message names `SurfaceDriverError`. No E01–E10 eval scripts exist yet.
+- **Freeze checks recorded before commit:**
+  - *Search-click risk proof (executable, real `policy/legacy_bank.json`):* for `CLICK` on
+    `/members/search` with the `Search` button target, exactly one explicit rule matches —
+    `(CLICK, /members/search, target_name=None) -> SAFE_READ` — and `classify_risk` returns
+    `SAFE_READ`; `ActionGate.authorize` on the observed search-page snapshot returns `ALLOW /
+    SAFE_READ`. Semantics confirmed in `risk.py`: when one or more explicit rules match, the
+    result is the highest tier among the **matching explicit rules only**; the generic default
+    (`CLICK -> REVERSIBLE_WRITE`) is consulted only when zero explicit rules match, so the
+    SAFE_READ rule is live, not dead. Proven for unmatched clicks too: `CLICK /members/M1001
+    "Transfer funds"` and `CLICK /members/M1001/transfer "Review transfer"` match no explicit
+    rule and classify as `REVERSIBLE_WRITE`. Pinned by
+    `tests/policy/test_risk.py::test_committed_search_click_rule_is_live_and_the_default_applies_only_when_nothing_matches`.
+  - *V1 retry decision (implementation narrowing, deliberate):* M4 implements **no automatic
+    re-dispatch** of any action. ARCHITECTURE §7 *permits* a bounded retry matrix (one retry
+    for SAFE_READ, one for demonstrably idempotent REVERSIBLE_WRITE, gated modal dismissal);
+    M4 narrows it to zero because the flagship deterministic replay does not need re-dispatch
+    to prove any required behaviour. What exists instead: bounded observation polling for
+    target resolution, postconditions, and the checkpoint; ambiguity is never retried; policy
+    DENY is never retried; REQUIRE_INTERVENTION is never automatically retried; surface and
+    transform errors terminate. A SAFE_READ or REVERSIBLE_WRITE re-dispatch rule will be added
+    only when evidence shows a concrete recoverable failure mode and its safety conditions
+    (D16). ARCHITECTURE.md is not contradicted (it bounds retries; it does not require them) and
+    is left unchanged.
+  - *Programming-error semantics:* the three `RunResult` statuses describe **reachable runtime
+    outcomes** — SUCCESS, BUSINESS_OUTCOME, FAILURE. Internal invariant violations are
+    programming errors, not a fourth outcome, and propagate loudly (`RuntimeError` /
+    `ValueError`): duplicate output recording, a missing declared output or an undeclared
+    output at SUCCESS construction (`ReplayEngine` checks `set(outputs) == set(artifact.outputs)`
+    immediately before building SUCCESS and rejects a duplicate at record time), impossible
+    `ActionGate` API misuse (its `ValueError`s), and any other condition unreachable from a
+    schema-valid artifact and a correctly constructed engine. They are never converted into
+    FAILURE, SURFACE_ERROR, TRANSFORM_ERROR, or any other user-facing `FailureCode`, so an
+    implementation defect cannot be disguised as an ordinary workflow failure.
+- **Bugs or incorrect assumptions discovered:** (1) two test-side mistakes only — a schema-I2
+  violation in a binding test fixture (an unreferenced required input) and a percent-encoding
+  test that used a space, which the segment rule rejects by design; (2) the first error-boundary
+  test expected the first observation to belong to `s2`; it belongs to `s1`'s postcondition
+  wait. No engine or surface defect was found by the live proofs; every live test passed on the
+  first run.
+- **Fixes made:** test fixtures corrected; no production change was needed after the first
+  green unit run.
+- **Remaining limitations:** no evidence is written (step 9) — `RunResult` is in-memory only;
+  `FailureDetail.expected/observed` render bound values (needed for debuggability; the Redactor
+  decides what persists); REQUIRE_INTERVENTION ends the run as FAILURE/INTERVENTION_REQUIRED
+  until step 16 suspends instead; a non-AUTOMATION `ControlOwner` surfaces as
+  POLICY_DENIED/CONTROL_NOT_OWNED (step 16 checks ownership before the gate); no re-dispatch rule
+  exists (added only on evidence, D16); locator-path driver timeouts are translated but not
+  provoked live (no slow-load fault mode yet); `base_url` is origin-only (no sub-path mounting);
+  the gate still matches percent-encoded observed paths as single segments (conditions decode;
+  the gate does not); no CLI — replay is driven from tests.
+- **Git commit:** `2386eab` — feat: add deterministic capability replay core (rebased onto two
+  remote docs-only ARCHITECTURE.md wording commits `7055dfe`, `1b5a3bc`; pushed to `origin/main`).
+- **Presentation/pitch takeaway:** the runtime has no place to put a model — `ReplayDeps` has
+  three fields and a fresh interpreter that refuses to import an LLM SDK still replays the
+  capability end to end; ambiguity is a first-class failure with both candidates reported and
+  neither touched; a business outcome is detected before any generic failure can be declared;
+  and the same JSON file, byte-identical before and after, serves every member id.
+
+#### Reviewer / benchmark signal
+
+- **Assignment signal:** deterministic replay with stable semantic targeting, checkpoint
+  verification, declared outputs, runtime-condition handling, and exactly three caller-facing
+  results — "no such member" is a business outcome, never a crash.
+- **Reference-project lesson applied:** prove the deterministic core with a handwritten artifact
+  before introducing model uncertainty; make "zero LLM" a property of the types and the import
+  graph, then falsify it in a clean interpreter.
+- **What our implementation improves/clarifies:** outputs are trustworthy only on SUCCESS (no
+  partial leaks); the ref used to act is provably from the snapshot the gate judged; driver
+  failures cross the boundary as one driver-neutral type while programming errors stay loud.
+- **Proof:** `tests/replay/test_replay_live.py` (L1–L8), `tests/replay/test_engine.py` (every
+  FailureCode path, error boundary, zero dispatch), `tests/replay/test_zero_model.py` +
+  `zero_model_replay.py`, `tests/cua/test_boundaries.py` (M4 section).
+
 ## Decision corrections worth explaining
 
 | Initially proposed | Corrected to | Why it matters |
@@ -295,6 +434,13 @@ the step-8 proofs were split into Milestone 4 so the deterministic core gets its
 | First-matching risk rule wins | Highest matching risk wins, order-independent | A configuration reorder must never downgrade a commit button; a rule can only raise. Trade-off accepted: no rule can express "this control is safer than the broad rule" — exactly the exception a financial gate should not permit. |
 | Singular `success_checkpoint` (ARCHITECTURE wording) | Non-empty list, **ALL** semantics, declared order, short-circuit — approved extension | The four-condition vocabulary has no conjunction; a meaningful checkpoint needs route *and* heading. Recorded so M4's evaluator implements exactly this. |
 | Traceability test "every semantic string observed" while skipping templates | Templates bound with fixture member ids; concrete strings must appear in captures | A test that silently skips the two most important strings (the business-outcome detector, the checkpoint heading) would keep passing while the artifact drifted from reality. |
+| `RunResult` validates `outputs` keys against the artifact's declared outputs | `RunResult` enforces only self-contained invariants; `ReplayEngine` proves output completeness before constructing SUCCESS | The result does not own the artifact's output declaration; a cross-object check belongs to the component that holds both objects. |
+| `RunResult.inputs` echoing the bound inputs | Removed; nine fields only | Every terminal result would otherwise repeat member identifiers (and later, sensitive inputs) for no consumer; persistence and redaction are the EvidenceWriter's. |
+| Engine `except Exception -> SURFACE_ERROR` | `SurfaceDriverError` at the boundary, translated by `PlaywrightSurface`; engine catches `SurfaceDriverError \| UnknownRefError` only | A programming error mislabelled as a browser failure would hide bugs behind a plausible failure code. |
+| `config.base_url + step.route` | `build_destination(origin-only base, validated absolute path)` + segment-safe `bind_route` | Permissive joining lets a route replace the origin; the gate still authorizes the result, but the destination must be well-formed by construction. |
+| Partial READ outputs kept on FAILURE "for debugging" | `outputs == {}` on BUSINESS_OUTCOME and FAILURE | A caller must never mistake a value read before a failed checkpoint for a trustworthy capability output. |
+| Zero-model proof as an in-process import guard | Fresh-interpreter subprocess with the guard installed before any `cua` import (plus the structural tests) | Modules already imported by the test process would make an in-process guard vacuous. |
+| `KnownOutcome.terminal_status` "becomes `replay.TerminalStatus`" | Stays a string literal; agreement asserted by a test | `artifact/` importing `replay/` would invert the dependency direction (`replay -> artifact`). |
 
 ## Evidence produced
 
@@ -330,7 +476,19 @@ the step-8 proofs were split into Milestone 4 so the deterministic core gets its
 | `Surface.act` is called from exactly one production line in `cua` | `tests/cua/test_boundaries.py::test_surface_act_is_called_only_from_the_action_gate` |
 | The artifact JSON round-trips; refs, selectors, code, secrets, approvals, WAIT, undeclared/unused inputs, and unread outputs all fail validation | `tests/artifact/test_schema.py` (60 cases) |
 | `read_savings_balance@1.0.0` is parameterized (no `M1001`), declares MEMBER_NOT_FOUND as a business outcome, and every semantic string appears in an M2 capture | `tests/artifact/test_flagship_artifact.py` |
-| policy/artifact/hitl/surface/domain never reach `cua.llm` or `google`, transitively | `tests/cua/test_boundaries.py::test_deterministic_layers_never_reach_the_llm_layer` |
+| policy/artifact/hitl/surface/domain/replay never reach `cua.llm`, `cua.discovery`, or `google`, transitively | `tests/cua/test_boundaries.py::test_deterministic_layers_never_reach_the_llm_layer`, `::test_replay_never_reaches_playwright_or_the_llm_layer_transitively` |
+| The same checked-in artifact replays M1001 → `15275.00` and M1002 → `4120.75` in real Chromium, four dispatches each, artifact byte-identical afterwards | `tests/replay/test_replay_live.py::test_success_reads_the_savings_balance[*]` |
+| M404 is BUSINESS_OUTCOME / MEMBER_NOT_FOUND at `s3_search`, never a timeout or target failure; the READ is never dispatched | `::test_m404_is_member_not_found_business_outcome`, `tests/replay/test_engine.py::test_m404_is_a_business_outcome_not_a_failure`, `tests/replay/test_resolver.py::test_known_outcome_detected_while_polling_beats_not_found` |
+| `ambiguous_savings` → FAILURE / AMBIGUOUS_TARGET with both candidates reported (no refs) and neither read; a weaker strategy is never consulted after ambiguity | `::test_ambiguous_savings_fails_closed_and_reads_neither_candidate`, `test_resolver.py::test_ambiguity_is_immediate_and_never_falls_through_to_a_weaker_strategy` |
+| Policy denial → FAILURE / POLICY_DENIED with zero dispatches (empty policy at `s1`; READ disallowed at `s4` after exactly three) | `::test_empty_policy_denies_before_any_dispatch`, `::test_read_denied_by_policy_after_three_dispatches`, `test_engine.py::test_control_not_owned_denies_with_zero_dispatch[*]` |
+| IRREVERSIBLE classification → FAILURE / INTERVENTION_REQUIRED, never dispatched | `test_engine.py::test_irreversible_classification_requires_intervention_and_is_never_dispatched` |
+| Replay runs to SUCCESS in a fresh interpreter that refuses to import `google*`, `cua.llm`, `cua.discovery` (scripted and live); `import cua.replay` loads neither Playwright nor an LLM SDK | `tests/replay/test_zero_model.py`, `test_replay_live.py::test_zero_model_live_replay_in_a_fresh_interpreter`, `test_boundaries.py::test_importing_replay_does_not_load_playwright_or_an_llm_sdk` |
+| `ReplayDeps` has exactly `{surface, action_gate, clock}`; `replay/engine.py` has no `.act(` call and no broad `except` | `test_boundaries.py::test_replay_deps_has_no_field_that_could_hold_a_model`, `::test_replay_engine_contains_no_act_call_and_no_broad_except`, `::test_surface_act_is_called_only_from_the_action_gate` |
+| A real driver failure (dead port) is FAILURE / SURFACE_ERROR naming `SurfaceDriverError`, not an exception; programming errors propagate un-relabelled | `test_replay_live.py::test_failed_load_is_a_surface_error_failure_not_an_exception`, `tests/surface/test_playwright_surface.py::test_driver_failure_is_a_surface_driver_error_not_a_playwright_type`, `test_engine.py::test_unexpected_exceptions_propagate_and_are_never_relabelled[*]` |
+| DECIMAL is parsed from the string into `Decimal` with scale preserved; no `float` name in the module; JSON renders it as a string | `tests/replay/test_transforms.py::test_decimal_from_currency_text[*]`, `::test_decimal_never_goes_through_float`, `tests/replay/test_result.py::test_decimal_output_serializes_as_a_string_never_a_float` |
+| Outputs are authoritative only on SUCCESS: a READ value is discarded when the final checkpoint fails | `test_engine.py::test_checkpoint_failure_discards_the_partial_output`, `test_result.py::test_failure_requires_failure_and_empty_outputs` |
+| Unbound placeholders are errors; route placeholders bind to exactly one segment; external/malformed routes are rejected before any dispatch; base URL is origin-only | `tests/replay/test_binding.py` |
+| `route_matches` evaluates the decoded observed path literally; `value_equals` needs exactly one target; checkpoint is ALL-in-order with short-circuit | `tests/replay/test_conditions.py` |
 
 No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 
@@ -344,8 +502,12 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
 | `cua.domain` holds only shapes needed by the next milestone | Each module defines its own models when implemented; boundary test grows into `scripts/verify.sh` |
 | Boundary check is a pytest AST scan of `src/cua` | Becomes the fresh-clone `verify.sh` structural assertion (ARCHITECTURE §4) |
 | One `Surface` implementation (Chromium via Playwright), single-use per run | `DesktopAccessibilitySurface` behind the same Protocol; descriptors are already role + name + scope (designed, not implemented) |
-| Refs resolved by `(role, name, ordinal)` inside the surface | Durable targeting via `TargetDescriptor` strategies (step 7); refs stay observation-local forever |
+| Refs resolved by `(role, name, ordinal)` inside the surface | Durable targeting via `TargetDescriptor` strategies is now the `TargetResolver` (M4); refs stay observation-local forever — the resolver returns one only together with the snapshot it belongs to |
 | `_dispatch()` only counts and invalidates refs | Emits `ACTION_DISPATCHED` through the EvidenceWriter (step 9) |
+| `ReplayDeps = {surface, action_gate, clock}` | `evidence_writer`/`redactor` join at step 9; `control_owner` is read through the gate today and directly at step 16 for suspension |
+| REQUIRE_INTERVENTION → FAILURE/INTERVENTION_REQUIRED | Step 16: suspend, create `InterventionRequest`, resume on verified hand-back |
+| No re-dispatch of any action; polling only | D16 rules (one SAFE_READ retry, gated modal dismissal) added when a demo run shows the need |
+| `RunResult` in memory only; bound values appear in `FailureDetail.expected/observed` | EvidenceWriter persists a redacted envelope (step 9) |
 | `tag_hint` always `None` | Filled only if a concrete consumer appears |
 | `ControlOwner` is a state holder with a test-only constructor state | Step 16 adds the transitions (escalate / accept / done / verified / abort); the gate already denies on any non-AUTOMATION state |
 | Policy config is a static JSON file with segment-wise route patterns | Tenant overlays (designed only) vary base origin and route aliases; risk/policy fields have no overlay grammar by construction |
@@ -362,19 +524,18 @@ No `evidence/` directory exists yet (arrives with the EvidenceWriter milestone).
   contract; the reader raises on anything unrecognised, so a format change fails loudly.
 - Headed (non-headless) operation — needed for HITL — has not been exercised yet.
 - Fresh-clone reproducibility depends on `uv` and a Chromium download.
-- `DECIMAL` transform must accept currency-formatted cells (`$2,340.50`); untested until step 7.
-- The gate has no production caller yet: M4's `ReplayEngine` must route every action through
-  `ActionGate.dispatch`; the single-call-site test will fail the moment anything else calls
-  `act()`.
-- The handwritten artifact's strategies are validated against M2 captures, not executed; M4's
-  resolver is the first thing that will resolve them live.
+- Locator-path driver timeouts (`click`/`fill` on a slow page) are translated to
+  `SurfaceDriverError` by the same helper as navigation failures, but only the navigation path is
+  provoked live; a slow-load fault mode would exercise the other.
+- The engine's postcondition polling has only been needed for zero extra observations against
+  the local target (every postcondition held on the first observation); the bounded windows are
+  proven with the fake clock, not with a slow live page.
+- Timing defaults (5 s resolution, 5 s condition, 100 ms poll) are operational guesses; a real
+  target may need tuning (tenant overlay "wait tuning" seam).
 
 ## Next milestone
 
-**Milestone 4 — Deterministic replay core** (ARCHITECTURE §15 step 7 + step-8 proofs):
-`TargetResolver` (ordered strategies, one deadline, fail-closed on >1), declarative condition
-evaluator, `RunResult` with exactly three terminal statuses, `ReplayEngine` with
-`ReplayDeps` that has no LLM field by construction; proofs: M1001 → `15275.00`, same artifact
-M1002 → `4120.75`, M404 → BUSINESS_OUTCOME/MEMBER_NOT_FOUND, `ambiguous_savings` →
-FAILURE/AMBIGUOUS_TARGET with zero dispatch of the READ, policy denial → FAILURE/POLICY_DENIED
-with zero dispatch, zero-LLM reachability of the engine.
+**Milestone 5 — EvidenceWriter + Redactor** (ARCHITECTURE §15 step 9): the JSONL envelope,
+`ACTION_DISPATCHED` / `ACTION_COMPLETED` / `ACTION_FAILED` emitted from the surface's
+`_dispatch()` boundary, redaction before disk, failure screenshots, `evidence/replay/<run_id>/`
+for the M4 proofs, and `RunResult` persistence through the writer only.
