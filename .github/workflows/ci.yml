@@ -1,0 +1,46 @@
+# Continuously proves the repository's OFFLINE claims on a clean Ubuntu runner.
+#
+# The job has no secrets and sets no environment: there is no OPENAI_API_KEY, no CUA_LIVE_API,
+# no CUA_LIVE_HITL and no .env, so the live E01 provider call and the manual E08 handoff cannot
+# run here — they are audited from their committed evidence, exactly as scripts/verify.sh does
+# on a laptop. The only outside-world traffic is the locked dependency sync and the Chromium
+# download; the verification workload itself talks to the in-process Legacy Bank on localhost.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: offline verification (scripts/verify.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Install Chromium and its system dependencies
+        run: uv run playwright install --with-deps chromium
+
+      - name: Verify offline claims
+        run: scripts/verify.sh
