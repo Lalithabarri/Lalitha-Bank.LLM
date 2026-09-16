@@ -12,7 +12,25 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 7 — COMPLETE: `ArtifactCompiler` + compile report + generated artifact + E02.**
+**Milestone 8 — COMPLETE: minimum real same-session human-in-the-loop + official E08/E09.**
+The IRREVERSIBLE "Confirm transfer" click of the handwritten `transfer_funds@1.0.0` stops
+automation at the gate (`REQUIRE_INTERVENTION`, zero driver dispatch); the engine suspends inside
+the same run, takes PRE evidence (observation digest + PNG screenshot), moves the one shared
+`ControlOwner` AUTOMATION → PENDING_HUMAN → HUMAN, hands a typed `InterventionRequest` to a handler
+that holds nothing else (the terminal), the human clicks Confirm in the **same headed browser
+session** and types `done`, HUMAN → RETURNING, the step's own postcondition is verified on a fresh
+observation, POST evidence is taken from that observation, `completed_by=HUMAN`, RETURNING →
+AUTOMATION, and replay continues past the step. **Official E08/E09 = `evidence/replay/run_af80d82668bc`**
+(`sess_bb02d42eac0f`): 22 contiguous redacted 1.2 events, `ACTION_DISPATCHED` for s1/s2/s3/s5 only,
+`SUCCESS`, `transfer_reference = TXN-000001`, pre/post screenshots hashed, no runtime input, no
+model event, 26/26 audit. Unverifiable completion → `FAILURE / UNKNOWN_COMMIT_STATE`,
+`safe_to_retry=false`. The first manual attempt exposed and fixed an ARIA-reader defect (below).
+888 tests passed (36 real-Chromium) + 1 live skip; ruff clean. Committed as `f39febc`, pushed
+to `origin/main`.
+
+Milestone 7 is COMPLETE: committed as `60c2a49`, pushed to `origin/main`.
+
+**Milestone 7 — `ArtifactCompiler` + compile report + generated artifact + E02.**
 `cua/artifact/compiler.py` compiles the **persisted** official E01 record
 (`DISCOVERY_ENDED`: verified stop reason + literal-free trace) with the declared contract
 (`cua/discovery/capabilities.py`: goal projection + declared `MEMBER_NOT_FOUND`) into
@@ -24,7 +42,7 @@ artifact replayed on M1002 in a fresh interpreter whose guard forbids `openai`, 
 `cua.discovery` and the compiler modules → `SUCCESS`, `Decimal("4120.75")`, 14 events, 4 gated
 dispatches, zero model calls, artifact bytes unchanged, 20/20 audit; the generated artifact also
 reports M404 as `BUSINESS_OUTCOME/MEMBER_NOT_FOUND`. 850 tests passed (35 real-Chromium) + 1 live
-skip; ruff clean. Committed as `60c2a49`, pushed to `origin/main`.
+skip; ruff clean.
 
 Milestone 6 is COMPLETE: committed as `6eb1ddb`, pushed to `origin/main`.
 
@@ -35,13 +53,9 @@ Milestone 3A is COMPLETE: committed as `057d1d7`, pushed to `origin/main`.
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next milestone: **Milestone 8 — minimum real same-session HITL** (ARCHITECTURE §15 step
-16, §9): `REQUIRE_INTERVENTION` → automation relinquishes control → the same Playwright
-browser/context/page stays alive, headed, for the human → `InterventionRequest` recorded → explicit
-hand-back → re-observe, verify what the human accomplished, `completed_by = HUMAN`, never repeat an
-irreversible action → resume or terminate. Same `session_id` throughout; existing `ControlOwner`
-states; no dashboard first. Then `scripts/verify.sh` / `verify_live.sh` and the essential evals
-(E03–E06, E08–E10), then README/REPORT completion.
+Active next: **submission packaging** — `scripts/verify.sh` / `verify_live.sh`, the essential
+evals as named scripts reusing existing tests (E03–E06, E10), README demo path and proven-claims
+table, REPORT completion (seven headings, 1–3 pages), fresh-clone verification. No new features.
 
 ## Completed milestones
 
@@ -775,6 +789,114 @@ engine replays on a different member.
   `tests/artifact/test_compiler_independence.py`, `tests/cua/test_boundaries.py` (M7 section),
   `tests/replay/test_zero_model.py`.
 
+### Milestone 8 — Minimum real same-session human-in-the-loop · transfer capability · official E08/E09
+
+Maps to ARCHITECTURE §15 steps 16–17 (§9 state machine; amendment A3; decision D26). The last hard
+product capability: a human takes over the same live session where money moves, and hands it back.
+
+- **Goal:** `REQUIRE_INTERVENTION` → automation relinquishes ownership → the same headed browser stays
+  alive for the human → `InterventionRequest` → human performs the irreversible action directly in
+  that browser → explicit hand-back → fresh observation → deterministic verification →
+  `completed_by=HUMAN` → never repeat → resume or terminate safely. Same `session_id` throughout.
+- **Decisions applied:** D17 (IRREVERSIBLE never auto-dispatched; unknown commit state never
+  retried), D18 (`ControlOwner` as explicit state; same wrapper session id; resume only after
+  deterministic re-verification), D19 (redaction before disk; the evidence store is the only writer
+  of the new binary artifacts), §8 (DENY never becomes approval), §9 (H1–H6), **D26**. **Session
+  decisions (approved with the plan and amendments A1–A4 + the locked semantics):** one shared
+  `ControlOwner` object for engine and gate, identity asserted at run start; the intervention is a
+  branch inside `ReplayEngine.run` (no coordinator, no partial-run API, no browser recreation); the
+  handler contract is `intervene(request) -> HandBack` and the handler receives nothing but the
+  request; `done` and `abort` both mean "re-observe and verify" — the command text is never
+  transaction truth; the step's own postcondition (through the existing `_wait_for`) is the
+  verifier; POST evidence is captured from the observation the verdict was made on (`_wait_for`
+  now returns it / carries it on timeout); `VERIFIED + abort` = `INTERVENTION_ABANDONED`
+  (committed, not resumed); unverifiable = `UNKNOWN_COMMIT_STATE`, `safe_to_retry=false`, owner
+  left in RETURNING; `INTERVENTION_ABORTED` deliberately does not exist; screenshots are narrow
+  intervention evidence through `ScreenshotCapable` (runtime-checkable surface capability) and
+  `ArtifactSink.write_artifact` — relative path + sha256 + media type in the JSONL, bytes beside it;
+  PRE evidence failure fails closed before any ownership is granted, POST evidence failure after a
+  verified commit is `EVIDENCE_ERROR` with `safe_to_retry=false` and `completed_by=HUMAN`, and
+  never a reason to repeat; `HumanActionRecord` is the `INTERVENTION_VERIFIED` payload, not a
+  parallel type; intervention events live in the run's own `events.jsonl` (no `interventions/`
+  directory); `NOT_COMPLETED` is not derivable on this target (the review page carries no
+  non-commit signal) and was not invented.
+- **What was implemented:** `cua/hitl/control.py` transitions (`escalate/accept/hand_back/restore`,
+  `IllegalTransition`); `cua/hitl/intervention.py` (`InterventionRequest`, `HandBack`,
+  `InterventionHandler`, `VerificationOutcome`, `snapshot_digest`); `cua/hitl/cli.py`
+  (`StdinInterventionHandler`; EOF is never "done"); `ActionGate.control_owner`; surface
+  `ScreenshotCapable` + `PlaywrightSurface.capture_screenshot`; evidence 1.2 (`ArtifactRef`,
+  `INTERVENTION_REQUESTED / CONTROL_TRANSFERRED / HAND_BACK / INTERVENTION_VERIFIED`, `ArtifactSink`,
+  `JsonlEvidenceWriter.write_artifact`, recorder methods + `store_artifact`, `StepSummary.completed_by`,
+  `FailureSummary.safe_to_retry`); replay (`ReplayDeps.control_owner` + `intervention`, wiring
+  assertions, the `_intervene` branch, `FailureCode.UNKNOWN_COMMIT_STATE / INTERVENTION_ABANDONED`,
+  `FailureDetail.safe_to_retry`, `StepRecord.completed_by`); `capabilities/transfer_funds@1.0.0.json`
+  (handwritten, `amount: DECIMAL`, defaults Checking→Savings, s4 declared IRREVERSIBLE, checkpoint
+  route + status); `tests/surface/fixtures/H_transfer_complete.aria.txt` (real post-confirm capture);
+  `tests/evals/hitl_headed_smoke.py`, `tests/evals/e08_hitl_live.py` (manual, headed, 26-item audit),
+  `tests/evals/test_e08_evidence.py`; `tests/hitl/test_handoff.py` (simulated); scripted transfer
+  pages + `simulate_human_confirm` (a page-state change underneath the surface, never `act`);
+  live s1→s4 test. Policy, discovery, compiler, the flagship artifact and the E01/E02 evidence are
+  untouched.
+- **Actual verification performed:** headed smoke (unattended: launch, load, alive while blocked,
+  same-surface observe, clean close; then manually by the project owner with real stdin and manual
+  interaction, `sess_2c6e93de162b`); `uv run pytest -q` (888 passed + 1 live skip); `uv run pytest -m
+  browser -q` (36); `ruff check` + `ruff format --check`; `git diff --check`; grep for `.act(` in
+  `src/cua` (one call); **official manual E08/E09** — real Legacy Bank on `:8000` (policy verbatim),
+  headed Chromium, real gate/recorder, `StdinInterventionHandler`, the owner clicked "Confirm
+  transfer" in the visible window and typed `done` — `all_must_pass` 26/26: single run and
+  session, exact 22-event chronology, contiguous seq, s4 `REQUIRE_INTERVENTION` exactly once, zero
+  `ACTION_DISPATCHED` for s4, dispatched steps `[s1, s2, s3, s5]`, ownership transitions in order,
+  restore only after verification, `VERIFIED_COMPLETED` / `completed_by=HUMAN`, hand-back `DONE`,
+  `RUN_COMPLETED SUCCESS` with `TXN-000001`, pre/post PNGs stored and sha256-matched, post digest ≠
+  pre, no bytes/absolute paths in the JSONL, runtime inputs absent (`<input:member_id>`,
+  `<input:amount>`), no ref token, every line redacted 1.2, no model events, same surface/session,
+  surface opened once, headed, no `openai`/`cua.llm` loaded; the file re-audited offline.
+- **Test/eval results:** 888 passed, 1 skipped (M1–M7 850 unchanged except deliberate pins: evidence
+  schema `1.2` with 1.0/1.1 readable, `ReplayDeps` field set, `FailureCode` vocabulary, the fixture
+  set, the `ControlOwner` "no transitions yet" placeholder replaced by H1; new 38 by `--collect-only`:
+  hitl +32 [transitions 22 parametrized + handoff 15 − placeholder], evals +2, surface +1, replay +1,
+  boundaries +2, evidence 0). Browser: 36 (35 + the live s1→s4 REQUIRE_INTERVENTION proof).
+- **Bugs or incorrect assumptions discovered:** **(1) Live ARIA-reader defect, found by the first
+  manual headed run** (`run_b4b0d834afeb`, `POSTCONDITION_FAILED` at s2 after 138 observations):
+  Playwright's `aria_snapshot(mode="ai")` emits number-looking trailing text as a YAML-quoted scalar
+  (`textbox "Amount": "500.00"`), and the M2 reader kept the quotes, so `value_equals` compared
+  `'"500.00"'` with `'500.00'`; the flagship never hit it because `M1001` is not number-like. Fixed
+  at the ARIA boundary (`_unquote_scalar`: a fully quoted trailing scalar or `text:` node is
+  unquoted with the same escape rules as names; anything else verbatim) and pinned by a reader test
+  and a real-browser s1→s4 test that would have caught it. (2) The plan's first chronology emitted
+  `CONTROL_TRANSFERRED` before `INTERVENTION_REQUESTED`; reordered to the approved order. (3) The
+  first `_Stop` did not carry the observation the verdict was made on; `_wait_for` now returns it
+  so the POST screenshot corresponds to the verifier state. The failed manual runs were not
+  committed; this ledger entry is the record.
+- **Fixes made:** the three above.
+- **Remaining limitations:** no positive "not committed" verdict (the review page has no
+  non-commit signal); one intervention per step; the terminal is the operator interface; screenshot
+  pixels are not redacted (synthetic data, D19 limit); no `interventions/` directory; the E08 audit's
+  in-process facts (same surface object, no model module) are re-derivable only from the run, the
+  rest from the file.
+- **Git commit:** `f39febc` — feat: add same-session human intervention with verified E08 E09
+  (pushed to `origin/main`), including the official run, the transfer capability, A3 and D26.
+- **Presentation/pitch takeaway:** the gate stopped the money-moving click before any driver call;
+  the human did it in the same window the automation was using; the engine believed neither the
+  human's word nor the operator's command — only the page — and then continued the run without ever
+  touching the irreversible step itself.
+
+#### Reviewer / benchmark signal
+
+- **Assignment signal:** REQUIREMENTS §8 in full — stuck/blocked detection with context, the same
+  live session, manual steps then hand-back, context and evidence preserved across the handoff, a
+  clear owner at every point, a real (not mocked) pause/cede/resume.
+- **Reference-project lesson applied:** verify what the human did by re-observing the surface with
+  the artifact's own conditions; make the handler unable to act by construction; treat evidence
+  failure after a human action as a reason to stop, never to repeat.
+- **What our implementation improves/clarifies:** one shared owner object (no synchronized copies);
+  `done` and `abort` are hand-back signals, not claims; unknown commit state is a first-class,
+  non-retryable terminal failure; the PRE/POST screenshots are evidence tied to the verdict
+  observation, never an input to it.
+- **Proof:** `evidence/replay/run_af80d82668bc`, `tests/evals/e08_hitl_live.py` +
+  `test_e08_evidence.py`, `tests/hitl/test_handoff.py`, `tests/hitl/test_control.py`,
+  `tests/replay/test_replay_live.py` (s1→s4), `tests/surface/test_aria_reader.py` (quoted scalars).
+
 ## Decision corrections worth explaining
 
 | Initially proposed | Corrected to | Why it matters |
@@ -818,6 +940,12 @@ engine replays on a different member.
 | Reproduce the handwritten heading checkpoint so the generated artifact matches it | Route-only checkpoint derived from the READ page's `ROUTE` evidence | The trace records no heading text; the compiler emits only verification semantics it can justify and refuses to invent stronger ones (documented as an intentional property, not a defect). |
 | `capability_name` and `compiler_version` as `compile()` parameters | Name comes from the declaration and must equal the trace's goal name; the compiler stamps its own version | A caller-supplied copy of either would be provenance the compiler did not establish. |
 | Export the compiler from `cua.artifact.__init__` | Explicit `cua.artifact.compiler` import only; the replay guard forbids it | Replay imports `cua.artifact`; exporting the compiler there would make "replay never loads the compiler" false by construction. |
+
+| M8 plan: `INTERVENTION_ABORTED` for a human abort | No such code; `abort` after HUMAN verifies like `done`; verified + abort = `INTERVENTION_ABANDONED` | The review page cannot prove non-commit, so an "abort" cannot mean "cancelled"; the command text is never transaction truth. |
+| M8 plan: capture the POST screenshot from the first observation after hand-back | `_wait_for` returns the observation the verdict was made on; POST is captured from it | Evidence must correspond to what deterministic verification classified, not to an earlier poll. |
+| M8 plan: separate `HumanActionRecord` type | The `INTERVENTION_VERIFIED` payload is the record | Two parallel records of the same facts would drift; the envelope already carries run/session/artifact/step identity. |
+| M8 plan: two equivalent `ControlOwner` objects (engine and gate) | One shared object, identity asserted at run start | A synchronized copy is a race and a lie; the gate must observe the engine's transition instantly. |
+| M2 reader: trailing aria text taken verbatim | Fully quoted YAML scalars are unquoted (M8 live bug) | Playwright quotes number-like values; `"500.00"` is serialisation, not page content. Found only by a real headed run. |
 
 ## Evidence produced
 
@@ -895,11 +1023,14 @@ engine replays on a different member.
 | A deficient record (unsuccessful, unparameterized input, unsupported action, ambiguous/unproven target, bad binding, missing/duplicate/unknown output, transform inconsistency, underivable success semantics, irreversible step, invalid declared outcome) never yields an artifact | `tests/artifact/test_compiler.py::test_a_deficient_record_fails_with_a_named_code_and_no_artifact[*]` and siblings |
 | The generated artifact replays M1002 → `Decimal("4120.75")` in a fresh interpreter forbidding the model layer, discovery and the compiler; M404 → `BUSINESS_OUTCOME`; the committed files are reproducible from the committed E01 record | `tests/evals/test_e02_compile_replay.py`, `evidence/replay/run_50600b9540ca`, `capabilities/generated/` |
 | The compiler reaches neither discovery, llm, a provider SDK, the driver nor the replay engine; `cua.artifact`'s init never imports it; the transforms leaf loads no replay module | `tests/cua/test_boundaries.py` (M7 section) |
+| Same-session HITL: shared owner, handler cannot reach the surface, zero dispatch for the irreversible step, verified human completion advances past it and is never redispatched, unverifiable → `UNKNOWN_COMMIT_STATE` `safe_to_retry=false`, pre/post screenshots hashed, chronology redacted | `tests/hitl/test_handoff.py`, `tests/hitl/test_control.py`, `tests/replay/test_replay_live.py` (s1→s4), official `evidence/replay/run_af80d82668bc` + `tests/evals/test_e08_evidence.py` |
+| Number-like textbox values are read unquoted (live-found ARIA defect) | `tests/surface/test_aria_reader.py::test_quoted_yaml_scalars_are_unquoted_but_content_is_never_altered` |
 
 `evidence/` now holds `README.md`, four sample replay runs (L1 SUCCESS, L3 BUSINESS_OUTCOME, L4
 AMBIGUOUS_TARGET, L5a POLICY_DENIED), the official E01 discovery run `discovery/run_e49e4d0cbe09`
-and the E02 replay of the generated artifact `replay/run_50600b9540ca`; `capabilities/generated/`
-holds the compiled artifact and its compile report.
+the E02 replay of the generated artifact `replay/run_50600b9540ca`, and the official same-session
+HITL run `replay/run_af80d82668bc` with its pre/post screenshots; `capabilities/generated/` holds
+the compiled artifact and its compile report.
 
 ## Production and evolution seams
 
@@ -956,9 +1087,9 @@ holds the compiled artifact and its compile report.
 
 ## Next milestone
 
-**Milestone 8 — minimum real same-session HITL** (ARCHITECTURE §15 step 16, §9, D17, D18): the
-engine suspends on `REQUIRE_INTERVENTION` instead of failing, the same headed Playwright session
-stays alive for the human, `InterventionRequest` / `HumanActionRecord` evidence, explicit hand-back
-with deterministic re-verification, `completed_by = HUMAN`, no repeat of a human-completed
-irreversible action. Then `scripts/verify.sh` / `verify_live.sh` and the essential evals; then
-README and REPORT completion.
+**Submission packaging** (ARCHITECTURE §15 steps 18–19, 22–23): `scripts/verify.sh` (offline, no
+key, no human, no network) and `scripts/verify_live.sh`; the essential evals as named scripts
+reusing the tests that already prove them (E03 zero-model, E04 business outcome, E05 ambiguity,
+E06 policy denial, E10 secret persistence); README demo path + proven-claims table; REPORT
+completion within 1–3 pages; fresh-clone verification. Reviewer console only if everything above
+is done.
