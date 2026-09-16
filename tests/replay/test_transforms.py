@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from cua.artifact import TransformType
+from cua.artifact import transforms as transforms_module
 from cua.replay import PYTHON_TYPES, TransformError, apply_transform, validate_output
-from cua.replay import transforms as transforms_module
 
 T = TransformType
 

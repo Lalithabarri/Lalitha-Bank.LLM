@@ -54,3 +54,38 @@ def test_the_guard_itself_bites():
         [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True
     )
     assert out.stdout.startswith("blocked:")
+
+
+def test_the_generated_artifact_replays_zero_model_on_the_scripted_surface(tmp_path):
+    """Offline pre-check of E02: the compiler's output (from the official E01 record) replays
+    M1002 in a fresh interpreter that forbids the model layer *and the compiler itself*."""
+    from cua.artifact import ArtifactStore
+    from cua.artifact.compile_report import CompileSuccess
+    from cua.discovery.capabilities import READ_SAVINGS_BALANCE_DECLARATION
+    from tests.artifact.compiler_support import compile_official
+
+    result = compile_official(READ_SAVINGS_BALANCE_DECLARATION)
+    assert isinstance(result, CompileSuccess)
+    path = ArtifactStore(tmp_path / "generated").save(result.artifact)
+    report = run_zero_model(
+        "--member", "M1002", "--artifact", str(path), "--evidence-root", str(tmp_path / "ev")
+    )
+    assert report["status"] == "SUCCESS"
+    assert report["outputs"] == {"savings_balance": "4120.75"}
+    assert report["output_types"] == {"savings_balance": "Decimal"}
+    assert report["provenance_source"] == "discovery"
+    assert report["artifact_unchanged"] is True
+    assert report["forbidden_loaded"] == [] and report["forbidden_attempted"] == []
+    assert report["events_written"] == 14 and report["member_in_evidence"] is False
+
+
+def test_the_guard_forbids_the_compiler_too():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from tests.replay.zero_model_replay import _Guard; "
+        "sys.meta_path.insert(0, _Guard()); import cua.artifact.compiler"
+    )
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True)
+    assert out.returncode != 0 and "zero-model guard" in out.stderr

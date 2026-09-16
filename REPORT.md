@@ -1,7 +1,7 @@
 # REPORT
 
-> **Status: skeleton (Milestone 6 frozen).** Every statement below is backed by committed code,
-> tests or evidence at `99b7291`. Sections marked **[NOT YET IMPLEMENTED]** or **[TODO]** describe
+> **Status: skeleton (Milestone 7 frozen).** Every statement below is backed by committed code,
+> tests or evidence on `main`. Sections marked **[NOT YET IMPLEMENTED]** or **[TODO]** describe
 > work that has not happened; nothing in them is claimed. Target length when complete: 1–3 pages.
 
 ## Architecture
@@ -18,7 +18,7 @@ CLI [TODO] -> CapabilityRunner [TODO]
         +----------> ActionGate (cua.policy) <--+   single Surface.act caller
                          Surface (PlaywrightSurface, accessibility-first observe/act)
                          Legacy Bank Operations Console (local, synthetic, no test ids)
-NormalizedTrace -> ArtifactCompiler [NOT YET IMPLEMENTED] -> CapabilityArtifact -> ArtifactStore
+persisted DISCOVERY_ENDED record -> ArtifactCompiler (cua.artifact.compiler) -> CapabilityArtifact + CompileReport -> ArtifactStore
 All components -> EvidenceRecorder -> Redactor -> evidence/<run_kind>/<run_id>/events.jsonl
 ```
 
@@ -28,7 +28,9 @@ states, `CapabilityArtifact` schema + store, handwritten `read_savings_balance@1
 semantic `TargetResolver`, conditions, `RunResult`, `ReplayEngine` (M4); evidence envelope,
 `Redactor`, JSONL writer, recorder (M5); provider-neutral `LLMClient`, OpenAI Responses adapter,
 model-safe observations, validator, ambiguity guard, goal verifier, normalized trace, discovery loop,
-official live E01 (M6). Perception is accessibility-shaped (role + accessible name + table/row/group
+official live E01 (M6); deterministic `ArtifactCompiler` + compile report, generated
+`capabilities/generated/read_savings_balance@1.0.0`, E02 replay of the generated artifact on M1002
+(M7). Perception is accessibility-shaped (role + accessible name + table/row/group
 context), never CSS/XPath. Dependency direction is enforced by structural tests
 (`tests/cua/test_boundaries.py`).
 
@@ -46,10 +48,39 @@ outcome ≠ failure), per-step `risk` as policy-stamped metadata (can raise, nev
 Validators reject transient refs, selectors, code, undeclared/unused inputs, unread outputs and
 `WAIT`. Example: `capabilities/read_savings_balance@1.0.0.json` (handwritten, replayed in M4).
 
-**[NOT YET IMPLEMENTED]** `ArtifactCompiler`: the M6 `NormalizedTrace` (literal-free by
-construction — FILL recorded as `INPUT_REF(member_id)`, routes as `/members/{member_id}`, targets as
-role + context with the content name dropped) is produced and persisted, but no artifact has been
-compiled from it yet. Next milestone.
+`ArtifactCompiler` (`cua/artifact/compiler.py`, M7) is a pure function of the persisted
+`DISCOVERY_ENDED` record of a discovery run (the literal-free trace plus the verified stop reason —
+the same bytes a reviewer reads in `evidence/discovery/<run_id>/events.jsonl`) and a declared
+`CapabilityDeclaration` (name, description, typed inputs/outputs, declared known outcomes). It
+compiles only a `GOAL_REACHED` record, iterates the trace in order, and derives every field by a
+named rule written into a typed `CompileReport` (I1–I6 with evidence): each target is exactly the
+semantic descriptor the discovery ambiguity guard resolved to one element (role + name + row/group
+scope; one strategy, no fallback, never `first()`); bindings are preserved as recorded
+(`INPUT_REF(member_id)`); NAVIGATE/CLICK postconditions are `route_matches` on the observed landing
+path, FILL is `value_equals` on its own binding; the success checkpoint is `route_matches` on the
+final observed path, parameterized because the trace's `input_evidence` proves the member by
+`ROUTE`; risk is the gate's classification at discovery; provenance is `source: discovery`,
+`discovery_run_id: run_e49e4d0cbe09`, `model_id: gpt-5.6-sol`, `compiler_version: 1.0.0`. It never
+calls a model, never receives a bound value, never string-replaces, does no I/O, and is
+structurally and behaviourally barred from reading the handwritten artifact (the compile succeeds
+with `open` monkeypatched to raise and in a scratch directory holding only the evidence file).
+Insufficient traces fail with a closed `CompileErrorCode` (unsuccessful record, unparameterized
+input, ambiguous or unproven target, missing/duplicate output producer, transform inconsistency,
+underivable success semantics, irreversible step, …); no partial artifact is ever produced. Output:
+`capabilities/generated/read_savings_balance@1.0.0.json` + `compile_reports/…`, reproducible
+byte-for-byte from the committed E01 evidence.
+
+**Intentionally weaker checkpoint.** The generated artifact's success checkpoint is only
+`route_matches("/members/{member_id}")`; the handwritten bootstrap additionally checks the member
+heading. This is a property of evidence-driven compilation, not a defect: the trace records enough
+structured evidence to justify the route (the value was read on a page whose path segment *is* the
+requested member), but no heading text, so the compiler refuses to invent the stronger condition.
+Replay still fails closed if the Savings cell does not resolve uniquely or does not convert.
+
+Known business outcomes are **declared**, not discovered: a successful trace can never evidence
+one (an outcome ends discovery as `REPORT_BLOCKED`), so `MEMBER_NOT_FOUND` is declared beside the
+goal (`cua/discovery/capabilities.py`, text traceable to the M2 not-found capture), labelled
+`DECLARED` in the report, and verified by replaying the generated artifact on M404.
 
 ## Determinism & error handling
 
@@ -73,8 +104,16 @@ reasons `GOAL_REACHED | MAX_STEPS | TIMEOUT | DEAD_END | BLOCKED_BY_POLICY | MOD
 corrective retry, a deterministic no-progress dead-end rule, and a deterministic goal verifier —
 the model's FINISH is only a proposal.
 
-**[TODO]** E02 (discover → compile → replay on a different member) once the compiler exists;
-failure-mode table.
+**E02** (`tests/evals/test_e02_compile_replay.py`, evidence `evidence/replay/run_50600b9540ca`): the
+official E01 record → compiler → generated artifact, persisted and reloaded through `ArtifactStore`
+→ replayed on **M1002** in a fresh interpreter whose import guard forbids `openai`, `google`,
+`cua.llm`, `cua.discovery` and the compiler modules themselves → `SUCCESS`,
+`savings_balance == Decimal("4120.75")`, 14 events, 4 dispatches each preceded by `GATE_DECISION
+ALLOW`, zero `MODEL_CALL`s, artifact bytes unchanged, `M1002` absent from the evidence; 20/20
+audit items. The same generated artifact reports M404 as `BUSINESS_OUTCOME/MEMBER_NOT_FOUND` with
+the READ never dispatched.
+
+**[TODO]** failure-mode table.
 
 ## Heterogeneity & multi-tenant
 
@@ -133,11 +172,14 @@ read-path exfiltration is not policed; pixel content is not redacted (no screens
 
 ## Cuts
 
-Deliberate, at clean seams: no ArtifactCompiler yet (next); no same-session HITL transitions yet
-(after the compiler); no CLI/`CapabilityRunner` (runs are driven from tests and `tests/evals`); no
+Deliberate, at clean seams: no same-session HITL transitions yet (next); no CLI/`CapabilityRunner` (runs are driven from tests and `tests/evals`); no
 screenshots; no reviewer console; no `WAIT` action; no automatic re-dispatch retries; no
 self-healing replay (refused, D21); no Gemini/Anthropic adapters (D24 keeps the seam); no tenant
-overlays or desktop surface (designed only); no queues, DB, auth, telemetry. Known limits are listed
+overlays or desktop surface (designed only); no queues, DB, auth, telemetry. Compiler limits, by
+design: the checkpoint carries only what the trace justifies (route, not heading — see Artifact
+schema); one verified strategy per target (no descriptor minimization without an observation);
+known outcomes are declared, not trace-learned (an outcome-discovery run merging `OutcomeCandidate`
+is the seam); a CLICK that changes no route gets a weak-but-true route postcondition. Known limits are listed
 per milestone in PROJECT_STATUS.md.
 
 **[TODO]** Final cut list at submission.

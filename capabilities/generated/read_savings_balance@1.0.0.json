@@ -1,0 +1,152 @@
+{
+  "artifact_id": "read_savings_balance@1.0.0",
+  "capability_name": "read_savings_balance",
+  "schema_version": "1.0",
+  "capability_version": "1.0.0",
+  "description": "Find the member identified by member_id in the operations console and read the current balance of that member's Savings account.",
+  "inputs": {
+    "member_id": {
+      "type": "STRING",
+      "required": true,
+      "description": "Member number, as printed on the account card"
+    }
+  },
+  "outputs": {
+    "savings_balance": {
+      "type": "DECIMAL",
+      "description": "Savings account balance in USD"
+    }
+  },
+  "steps": [
+    {
+      "step_id": "s1_navigate",
+      "description": "Open /members/search.",
+      "action": "NAVIGATE",
+      "route": "/members/search",
+      "target": null,
+      "value": null,
+      "output": null,
+      "risk": "SAFE_READ",
+      "postcondition": {
+        "type": "route_matches",
+        "route": "/members/search"
+      }
+    },
+    {
+      "step_id": "s2_fill",
+      "description": "Fill the textbox 'Member ID' in 'group: Look up member' with input member_id.",
+      "action": "FILL",
+      "route": null,
+      "target": {
+        "strategies": [
+          {
+            "role": "textbox",
+            "name": "Member ID",
+            "scope": "group: Look up member",
+            "text_contains": null
+          }
+        ]
+      },
+      "value": {
+        "kind": "INPUT_REF",
+        "input_name": "member_id"
+      },
+      "output": null,
+      "risk": "REVERSIBLE_WRITE",
+      "postcondition": {
+        "type": "value_equals",
+        "target": {
+          "strategies": [
+            {
+              "role": "textbox",
+              "name": "Member ID",
+              "scope": "group: Look up member",
+              "text_contains": null
+            }
+          ]
+        },
+        "value": {
+          "kind": "INPUT_REF",
+          "input_name": "member_id"
+        }
+      }
+    },
+    {
+      "step_id": "s3_click",
+      "description": "Click the button 'Search' in 'group: Look up member'.",
+      "action": "CLICK",
+      "route": null,
+      "target": {
+        "strategies": [
+          {
+            "role": "button",
+            "name": "Search",
+            "scope": "group: Look up member",
+            "text_contains": null
+          }
+        ]
+      },
+      "value": null,
+      "output": null,
+      "risk": "SAFE_READ",
+      "postcondition": {
+        "type": "route_matches",
+        "route": "/members/{member_id}"
+      }
+    },
+    {
+      "step_id": "s4_read_savings_balance",
+      "description": "Read the cell in 'table: Accounts > row: Savings' as savings_balance (DECIMAL).",
+      "action": "READ",
+      "route": null,
+      "target": {
+        "strategies": [
+          {
+            "role": "cell",
+            "name": null,
+            "scope": "table: Accounts > row: Savings",
+            "text_contains": null
+          }
+        ]
+      },
+      "value": null,
+      "output": "savings_balance",
+      "risk": "SAFE_READ",
+      "postcondition": null
+    }
+  ],
+  "success_checkpoint": [
+    {
+      "type": "route_matches",
+      "route": "/members/{member_id}"
+    }
+  ],
+  "known_outcomes": [
+    {
+      "code": "MEMBER_NOT_FOUND",
+      "terminal_status": "BUSINESS_OUTCOME",
+      "detector": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            {
+              "role": "alert",
+              "name": null,
+              "scope": null,
+              "text_contains": "No member found for {member_id}."
+            }
+          ]
+        }
+      },
+      "description": "The console reports no member with the requested id."
+    }
+  ],
+  "provenance": {
+    "source": "discovery",
+    "compiled_at": "2026-09-16T05:22:54Z",
+    "discovery_run_id": "run_e49e4d0cbe09",
+    "model_id": "gpt-5.6-sol",
+    "compiler_version": "1.0.0",
+    "goal_summary": "Find the member identified by member_id in the operations console and read the current balance of that member's Savings account."
+  }
+}

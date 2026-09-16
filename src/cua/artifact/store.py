@@ -3,12 +3,19 @@
 One JSON file per artifact under a root directory; the file name *is* the identity. Nothing is
 written or returned without passing ``CapabilityArtifact`` validation, and an existing identity
 is never silently overwritten with different content.
+
+A compiled artifact's ``CompileReport`` (Milestone 7) is persisted beside it under
+``compile_reports/<artifact_id>.json`` — a subdirectory so ``list_ids`` never mistakes a report
+for an artifact. The store stays the only production writer of artifact-related files.
 """
 
 import json
 from pathlib import Path
 
+from cua.artifact.compile_report import CompileReport
 from cua.artifact.schema import CapabilityArtifact
+
+REPORTS_DIR = "compile_reports"
 
 
 class ArtifactNotFound(FileNotFoundError):
@@ -66,3 +73,29 @@ class ArtifactStore:
         if not self._root.exists():
             return []
         return sorted(p.stem for p in self._root.glob("*@*.json"))
+
+    # --- compile reports (Milestone 7) ------------------------------------------------------------
+
+    def report_path_for(self, artifact_id: str) -> Path:
+        artifact_path = self.path_for(artifact_id)  # validates the identity
+        return self._root / REPORTS_DIR / artifact_path.name
+
+    def save_compile_report(self, artifact_id: str, report: CompileReport) -> Path:
+        if report.artifact_id != artifact_id:
+            raise ValueError(f"report is for {report.artifact_id!r}, not {artifact_id!r}")
+        path = self.report_path_for(artifact_id)
+        payload = json.dumps(json.loads(report.model_dump_json()), indent=2, ensure_ascii=False)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload + "\n")
+        return path
+
+    def load_compile_report(self, artifact_id: str) -> CompileReport:
+        path = self.report_path_for(artifact_id)
+        if not path.exists():
+            raise ArtifactNotFound(str(path))
+        report = CompileReport.model_validate_json(path.read_text())
+        if report.artifact_id != artifact_id:
+            raise ValueError(
+                f"report {path.name} claims {report.artifact_id!r}, not {artifact_id!r}"
+            )
+        return report

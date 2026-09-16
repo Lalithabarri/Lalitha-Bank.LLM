@@ -381,3 +381,16 @@ flow, the §10 E01 row and §15 steps 10–12 — now reads as the provider-neut
 with OpenAI as the current adapter. The architecture, the discovery flow, the stop vocabulary,
 the evidence requirements and the provider-neutral seam are otherwise unchanged. This does not
 claim OpenAI was measured superior to Gemini; no comparison was run.
+
+**A2 (Milestone 7, 2026-09-16) — compiler input boundary and declared outcomes.** §6 "Input: normalized
+trace + declared discovery inputs" is implemented as the persisted `DISCOVERY_ENDED` record (the trace plus
+the verified stop reason, `cua.evidence.events`) plus a `CapabilityDeclaration` (name, description, typed
+inputs/outputs, declared known outcomes). §4 gains the edges `artifact.compiler -> evidence.events` and
+`artifact.compiler -> artifact.transforms` (the closed transforms now live in `artifact/` as a leaf;
+`replay/transforms.py` re-exports them), and keeps `artifact` free of `discovery`/`llm`; `cua.artifact`'s
+package init never imports the compiler, so `replay` never loads it. §6 `known_outcomes[]` are declared
+capability metadata (D14, "declared at compile time"), labelled `DECLARED` in the compile report and verified
+by replay; trace-learned outcomes remain a later extension through `OutcomeCandidate`. The compiler derives
+postconditions and the success checkpoint only from recorded routes and bindings — a route-only checkpoint
+is emitted when the trace records no heading text, never a stronger invented condition. Generated artifacts
+live in a separate store root `capabilities/generated/` beside `compile_reports/`. Decision D25.

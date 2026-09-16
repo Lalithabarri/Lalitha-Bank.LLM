@@ -70,3 +70,21 @@ def test_same_identity_different_content_is_refused(tmp_path):
         CapabilityArtifact.model_validate_json((tmp_path / "demo@0.1.0.json").read_text())
         == build()
     )
+
+
+def test_compile_report_lives_beside_the_artifact_and_is_never_listed_as_one(tmp_path):
+    from cua.artifact.compile_report import CompileSuccess
+    from cua.discovery.capabilities import READ_SAVINGS_BALANCE_DECLARATION
+    from tests.artifact.compiler_support import compile_official
+
+    result = compile_official(READ_SAVINGS_BALANCE_DECLARATION)
+    assert isinstance(result, CompileSuccess)
+    store = ArtifactStore(tmp_path)
+    with pytest.raises(ValueError, match="report is for"):
+        store.save_compile_report("other@1.0.0", result.report)
+    path = store.save_compile_report(result.artifact.artifact_id, result.report)
+    assert path == tmp_path / "compile_reports" / "read_savings_balance@1.0.0.json"
+    assert store.list_ids() == []
+    assert store.load_compile_report(result.artifact.artifact_id) == result.report
+    with pytest.raises(ArtifactNotFound):
+        store.load_compile_report("nope@1.0.0")

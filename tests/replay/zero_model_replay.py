@@ -1,13 +1,16 @@
 """Zero-model replay in a fresh interpreter.
 
-Run as ``python -m tests.replay.zero_model_replay --member M1001 [--live] [--evidence-root DIR]``.
-Before anything from ``cua`` is imported, an import guard is installed that makes importing
-``google*``, ``openai*``, ``cua.llm`` or ``cua.discovery`` raise. The replay then runs to
-completion — against the scripted surface, or (``--live``) a real Chromium and an in-process
-Legacy Bank — with the
-real evidence layer writing ``events.jsonl`` under ``--evidence-root`` (a temporary directory by
-default), and prints one JSON line. Because the interpreter is fresh, no previously imported
-module can make the guard vacuous.
+Run as ``python -m tests.replay.zero_model_replay --member M1001 [--live] [--evidence-root DIR]
+[--artifact PATH]``. Before anything from ``cua`` is imported, an import guard is installed that
+makes importing ``google*``, ``openai*``, ``cua.llm``, ``cua.discovery`` or the artifact compiler
+raise. The replay then runs to completion — against the scripted surface, or (``--live``) a real
+Chromium and an in-process Legacy Bank — with the real evidence layer writing ``events.jsonl``
+under ``--evidence-root`` (a temporary directory by default), and prints one JSON line. Because
+the interpreter is fresh, no previously imported module can make the guard vacuous.
+
+``--artifact`` replays a specific artifact file (Milestone 7: the compiler's output) instead of
+the handwritten flagship; the file is loaded through ``ArtifactStore`` so it is validated, and
+its bytes are asserted unchanged after the run.
 """
 
 import argparse
@@ -19,7 +22,14 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 
-FORBIDDEN_PREFIXES = ("google", "openai", "cua.llm", "cua.discovery")
+FORBIDDEN_PREFIXES = (
+    "google",
+    "openai",
+    "cua.llm",
+    "cua.discovery",
+    "cua.artifact.compiler",
+    "cua.artifact.declaration",
+)
 
 
 class _Guard(importlib.abc.MetaPathFinder):
@@ -38,15 +48,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--member", required=True)
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--evidence-root", default=None)
+    parser.add_argument("--artifact", default=None, help="artifact JSON file; default: flagship")
     args = parser.parse_args(argv)
 
     guard = _Guard()
     sys.meta_path.insert(0, guard)
     assert not any(m.startswith(FORBIDDEN_PREFIXES) for m in sys.modules)
 
-    from cua.evidence import EvidenceRecorder, EvidenceStore, RunKind  # noqa: E402 - after guard
+    from cua.artifact import ArtifactStore  # noqa: E402 - after guard
+    from cua.evidence import EvidenceRecorder, EvidenceStore, RunKind  # noqa: E402
     from cua.replay import MonotonicClock, TerminalStatus  # noqa: E402
     from tests.replay.support import engine_for, flagship  # noqa: E402
+
+    if args.artifact:
+        artifact_path = Path(args.artifact)
+        artifact = ArtifactStore(artifact_path.parent).load_id(artifact_path.stem)
+        artifact_bytes = artifact_path.read_bytes()
+    else:
+        artifact_path = None
+        artifact = flagship()
+        artifact_bytes = b""
+    artifact_before = artifact.model_dump()
 
     root = Path(args.evidence_root) if args.evidence_root else Path(tempfile.mkdtemp())
     store = EvidenceStore(root)
@@ -65,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = engine_for(
                 surface, MonotonicClock(), base_url=base_url, recorder=recorder
-            ).run(flagship(), {"member_id": args.member})
+            ).run(artifact, {"member_id": args.member})
         finally:
             surface.close()
             server.shutdown()
@@ -75,15 +97,21 @@ def main(argv: list[str] | None = None) -> int:
         surface = ScriptedSurface(base_url="http://fake.test", listener=recorder)
         result = engine_for(
             surface, MonotonicClock(), base_url="http://fake.test", recorder=recorder
-        ).run(flagship(), {"member_id": args.member})
+        ).run(artifact, {"member_id": args.member})
 
     events_path = store.events_path(RunKind.REPLAY, result.run_id)
     events = store.read_events(events_path)
     loaded = sorted(m for m in sys.modules if m.startswith(FORBIDDEN_PREFIXES))
+    artifact_unchanged = artifact.model_dump() == artifact_before and (
+        artifact_path is None or artifact_path.read_bytes() == artifact_bytes
+    )
     print(
         json.dumps(
             {
                 "status": result.status.value,
+                "artifact_id": result.artifact_id,
+                "provenance_source": artifact.provenance.source.value,
+                "artifact_unchanged": artifact_unchanged,
                 "outputs": {k: str(v) for k, v in result.outputs.items()},
                 "output_types": {k: type(v).__name__ for k, v in result.outputs.items()},
                 "forbidden_loaded": loaded,

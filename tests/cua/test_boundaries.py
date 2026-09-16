@@ -9,6 +9,9 @@ and the evidence writer; no evidence payload can hold a ref.
 Milestone 6: the OpenAI SDK is confined to one adapter under llm/; discovery/ never calls
 Surface.act and never catches broadly; importing any deterministic layer — or cua.discovery /
 cua.llm themselves — loads no provider SDK; DiscoveryDeps is the only deps type with a model slot.
+Milestone 7: the compiler lives in artifact/ and reaches neither discovery, llm, a provider SDK
+nor the replay engine (the transforms it shares with replay are a leaf); cua.artifact's package
+init never imports it, so replay never loads it; the transform implementation is a leaf.
 """
 
 import ast
@@ -67,6 +70,10 @@ DRIVER_NEUTRAL_MODULES = [
     "artifact/__init__.py",
     "artifact/schema.py",
     "artifact/store.py",
+    "artifact/transforms.py",
+    "artifact/declaration.py",
+    "artifact/compile_report.py",
+    "artifact/compiler.py",
     "replay/__init__.py",
     "replay/binding.py",
     "replay/clock.py",
@@ -95,6 +102,7 @@ DRIVER_NEUTRAL_MODULES = [
     "discovery/templating.py",
     "discovery/trace.py",
     "discovery/validator.py",
+    "discovery/capabilities.py",
 ]
 
 # The only files in cua that may write to disk (ARCHITECTURE §10: no ad-hoc writes; D19).
@@ -465,7 +473,16 @@ def test_llm_package_init_never_imports_the_adapter():
 
 
 def test_discovery_contains_no_act_call_and_no_broad_except():
-    for name in ("agent", "validator", "observation", "goal", "summaries", "trace", "result"):
+    for name in (
+        "agent",
+        "validator",
+        "observation",
+        "goal",
+        "summaries",
+        "trace",
+        "result",
+        "capabilities",
+    ):
         path = CUA_ROOT / "discovery" / f"{name}.py"
         assert _act_call_sites(path) == [], name
         tree = ast.parse(path.read_text())
@@ -588,3 +605,91 @@ def test_the_action_gate_is_still_the_only_production_caller_of_act_after_discov
         if not str(path.relative_to(CUA_ROOT)).startswith("surface/") and _act_call_sites(path)
     }
     assert callers == {"policy/action_gate.py"}
+
+
+# --- Milestone 7 -------------------------------------------------------------------------------
+
+COMPILER_MODULES = (
+    "cua.artifact.compiler",
+    "cua.artifact.compile_report",
+    "cua.artifact.declaration",
+)
+
+
+def test_compiler_reaches_no_discovery_llm_sdk_driver_or_replay_engine():
+    """Amendment 1: the compiler shares transforms with replay through a leaf, never through
+    the replay package (whose init loads the engine)."""
+    reached = _transitive_cua_imports("cua.artifact.compiler")
+    assert not {m for m in reached if m.startswith(LLM_MODULE_PREFIXES)}, sorted(reached)
+    assert not {m for m in reached if m.startswith("cua.replay")}, sorted(reached)
+    assert "cua.surface.playwright_surface" not in reached
+    assert "cua.artifact.transforms" in reached
+    for module in reached:
+        if module.startswith("cua"):
+            spec = importlib.util.find_spec(module)
+            assert spec and spec.origin
+            assert "playwright" not in _imported_roots(Path(spec.origin)), module
+
+
+def test_importing_the_compiler_loads_no_discovery_llm_sdk_driver_or_replay():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, cua.artifact.compiler; "
+        "print(sorted(m for m in sys.modules if m.startswith("
+        "('playwright', 'google', 'openai', 'cua.llm', 'cua.discovery', 'cua.replay'))))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", out.stdout
+
+
+def test_artifact_package_init_never_imports_the_compiler_so_replay_never_loads_it():
+    modules = {
+        node.module
+        for node in ast.walk(ast.parse((CUA_ROOT / "artifact" / "__init__.py").read_text()))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert not modules & {"cua.artifact.compiler", "cua.artifact.declaration"}
+    reached = _transitive_cua_imports("cua.replay")
+    assert "cua.artifact.compiler" not in reached
+    assert "cua.artifact.declaration" not in reached
+
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, cua.replay; "
+        "print(sorted(m for m in sys.modules if m.startswith("
+        "('cua.artifact.compiler', 'cua.artifact.declaration'))))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", out.stdout
+
+
+def test_transforms_implementation_is_a_leaf_and_replay_only_re_exports_it():
+    """``import cua.artifact.transforms`` must not execute the replay package."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, cua.artifact.transforms; "
+        "print(sorted(m for m in sys.modules if m.startswith('cua.replay')))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", out.stdout
+    shim = ast.parse((CUA_ROOT / "replay" / "transforms.py").read_text())
+    defs = [n for n in ast.walk(shim) if isinstance(n, ast.FunctionDef | ast.ClassDef)]
+    assert defs == [], "the replay shim defines nothing of its own"
+
+
+def test_the_compiler_has_no_disk_write_or_act_call_sites():
+    for relative in (
+        "artifact/compiler.py",
+        "artifact/compile_report.py",
+        "artifact/declaration.py",
+    ):
+        path = CUA_ROOT / relative
+        assert _disk_write_sites(path) == [], relative
+        assert _act_call_sites(path) == [], relative
+    assert set(DISK_WRITERS_ALLOWED) == {"artifact/store.py", "evidence/writer.py"}

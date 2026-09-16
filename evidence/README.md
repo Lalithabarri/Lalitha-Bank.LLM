@@ -76,4 +76,23 @@ provider-boundary checks (no member id in any model request or outbound body, no
 this file. `tests/evals/test_e01_evidence.py` re-runs the file audit in the normal suite; the run
 was produced by `CUA_LIVE_API=1 CUA_EVIDENCE_ROOT=evidence uv run pytest tests/evals -m live_api`.
 
+## Compiled artifact + E02 replay (Milestone 7, zero model, real Chromium, real Legacy Bank)
+
+| file | what it is |
+|---|---|
+| `../capabilities/generated/read_savings_balance@1.0.0.json` | the `ArtifactCompiler`'s output from the official E01 record above — `provenance.source: discovery`, `discovery_run_id: run_e49e4d0cbe09`, `model_id: gpt-5.6-sol`, `compiler_version: 1.0.0`. Not the handwritten bootstrap in `../capabilities/` (`source: handwritten`). |
+| `../capabilities/generated/compile_reports/read_savings_balance@1.0.0.json` | the typed compile report: per-step derivation rules, input action/observation sites, checkpoint derivation, invariants I1–I6 with evidence, `known_outcomes[].source: DECLARED`, and the trace fields the compiler deliberately did not use |
+| `replay/run_50600b9540ca/events.jsonl` | **E02**: the generated artifact replayed on `M1002` in a fresh interpreter whose import guard forbids `openai`, `google`, `cua.llm`, `cua.discovery` *and the compiler modules* — 14 events, 4 gated dispatches, `RUN_STARTED.provenance_source: discovery`, `RUN_COMPLETED` · `SUCCESS` · `savings_balance = 4120.75`, `M1002` absent (`<input:member_id>`) |
+
+The compiler consumed only the persisted `DISCOVERY_ENDED` record (the same bytes as
+`discovery/run_e49e4d0cbe09/events.jsonl`) plus the declared capability contract; it never opened
+the handwritten artifact (structural and behavioural tests in `tests/artifact/test_compiler_independence.py`).
+The generated artifact is reproducible from the committed evidence: compiling the committed record
+with the committed `compiled_at` yields byte-identical files
+(`tests/evals/test_e02_compile_replay.py::test_committed_generated_artifact_is_reproducible_from_the_committed_e01_evidence`).
+Produced by `CUA_CAPABILITIES_ROOT=capabilities/generated CUA_EVIDENCE_ROOT=evidence uv run pytest
+tests/evals/test_e02_compile_replay.py -m browser -k m1002`; the 20-item E02 audit is printed as
+`E02 REPORT` and re-run from disk by the same test. The declared `MEMBER_NOT_FOUND` outcome is
+verified on the generated artifact by the sibling `M404` test in that file.
+
 Intervention runs will sit beside these under `interventions/` once the HITL milestone lands.
