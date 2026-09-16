@@ -12,20 +12,21 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 6 — COMPLETE: provider-neutral LLMClient + OpenAI discovery + official E01.**
-Provider-neutral `LLMClient` (`DiscoveryRequest -> DecisionReply`, closed ACT | FINISH |
-REPORT_BLOCKED vocabulary); `OpenAIResponsesClient` (Responses API, `responses.parse` with a strict
-Pydantic schema, `store=False`, transport retries fixed at 0, credential from `OPENAI_API_KEY` only,
-the one importer of the SDK); model-safe observations (known runtime inputs templated to
-`<input:name>` before any request); deterministic `DecisionValidator` with the ambiguity guard and a
-narrow model-navigation allowlist; deterministic `ReadSavingsBalanceVerifier`; literal-free
-`NormalizedTrace`; `DiscoveryAgent` loop with six stop reasons; evidence vocabulary 1.1. **Official
-E01 = `evidence/discovery/run_e49e4d0cbe09`**: `gpt-5.6-sol`, first live masked attempt, 23/23
-MUST-PASS, 5 model calls, 0 corrective retries, 4 dispatched actions, `GOAL_REACHED`,
-`Decimal("15275.00")`; `M1001` absent from the persisted evidence and from every real provider
-request body; `store=False`; transport retries 0; ActionGate sole authority; normalized trace
-produced; **no `CapabilityArtifact` compiled yet.** 779 tests passed (33 real-Chromium) + 1 live
-skip; ruff clean. Committed as `6eb1ddb`, pushed to `origin/main`.
+**Milestone 7 — COMPLETE: `ArtifactCompiler` + compile report + generated artifact + E02.**
+`cua/artifact/compiler.py` compiles the **persisted** official E01 record
+(`DISCOVERY_ENDED`: verified stop reason + literal-free trace) with the declared contract
+(`cua/discovery/capabilities.py`: goal projection + declared `MEMBER_NOT_FOUND`) into
+`capabilities/generated/read_savings_balance@1.0.0.json` (`source: discovery`, run
+`run_e49e4d0cbe09`, `gpt-5.6-sol`, compiler `1.0.0`) plus a typed `compile_reports/…` proving
+I1–I6; pure function, no I/O, no model, closed `CompileErrorCode`, structurally and behaviourally
+barred from the handwritten artifact. **E02 = `evidence/replay/run_50600b9540ca`**: the generated
+artifact replayed on M1002 in a fresh interpreter whose guard forbids `openai`, `google`, `cua.llm`,
+`cua.discovery` and the compiler modules → `SUCCESS`, `Decimal("4120.75")`, 14 events, 4 gated
+dispatches, zero model calls, artifact bytes unchanged, 20/20 audit; the generated artifact also
+reports M404 as `BUSINESS_OUTCOME/MEMBER_NOT_FOUND`. 850 tests passed (35 real-Chromium) + 1 live
+skip; ruff clean. Committed as `60c2a49`, pushed to `origin/main`.
+
+Milestone 6 is COMPLETE: committed as `6eb1ddb`, pushed to `origin/main`.
 
 Milestone 5 is COMPLETE: committed as `70e053e`, pushed to `origin/main`.
 
@@ -34,11 +35,13 @@ Milestone 3A is COMPLETE: committed as `057d1d7`, pushed to `origin/main`.
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next milestone: **Milestone 7 — `ArtifactCompiler` + E02** (ARCHITECTURE §15 steps 13–14):
-the official E01 `NormalizedTrace` → deterministic compiler → generated `CapabilityArtifact`
-(invariants I1–I6, `compile_report.json`) → replay of the *generated* artifact on M1002 → correct
-`Decimal` savings balance with zero model decisions. The generated artifact must not be the
-handwritten M4 artifact.
+Active next milestone: **Milestone 8 — minimum real same-session HITL** (ARCHITECTURE §15 step
+16, §9): `REQUIRE_INTERVENTION` → automation relinquishes control → the same Playwright
+browser/context/page stays alive, headed, for the human → `InterventionRequest` recorded → explicit
+hand-back → re-observe, verify what the human accomplished, `completed_by = HUMAN`, never repeat an
+irreversible action → resume or terminate. Same `session_id` throughout; existing `ControlOwner`
+states; no dashboard first. Then `scripts/verify.sh` / `verify_live.sh` and the essential evals
+(E03–E06, E08–E10), then README/REPORT completion.
 
 ## Completed milestones
 
@@ -655,6 +658,123 @@ evidence vocabulary.
   (wire-level settings and the provider-boundary privacy proof), `tests/discovery/*`,
   `tests/cua/test_boundaries.py` (M6 section), `tests/cua/test_offline.py`.
 
+### Milestone 7 — `ArtifactCompiler` · compile report · generated artifact · E02
+
+Maps to ARCHITECTURE §15 steps 13–14 (amendment A2, decision D25). The milestone that closes the
+thesis: a model-driven discovery is compiled, without a model, into an artifact that a model-free
+engine replays on a different member.
+
+- **Goal:** compile the official E01 `NormalizedTrace` deterministically into a `CapabilityArtifact`
+  the M4 engine executes, prove invariants I1–I6 in a reviewer-readable report, and replay the
+  *generated* artifact on M1002 with zero model decisions — never the handwritten M4 artifact.
+- **Decisions applied:** D11 (`schema_version` vs `capability_version`), D12 (bindings preserved as
+  recorded; compilation fails if a required input drives no action), D13 (one verified semantic
+  strategy per target, no fallback, never `first()`), D14 (known outcomes declared at compile time),
+  D15 (replay stays zero-model — the guard now also forbids the compiler), D19 (the store remains the
+  only artifact writer; compile reports go through it), **D25** (compiler boundary). **Session
+  decisions (approved with the plan and two implementation-time amendments):** the compiler's input
+  is the persisted `DISCOVERY_ENDED` record (`cua.evidence.events.DiscoveryEndedPayload`) — not
+  `cua.discovery.trace.NormalizedTrace`, whose package init eagerly loads `cua.llm` and which itself
+  imports `cua.artifact` (a cycle and a structural violation); `cua.artifact.__init__` never imports
+  the compiler (the `cua.llm` adapter precedent), so `import cua.replay` never loads it;
+  `compiler_version` is a module constant, `capability_name` is not a parameter (it must equal both
+  the declaration and the trace's goal name); `run.outputs` (discovered values), `intent_summary`
+  (model text), `page_title_after_template` and `read_text`-as-a-value are deliberately unused;
+  known business outcomes are **declared** beside the goal (`cua/discovery/capabilities.py`),
+  labelled `DECLARED`, verified by replaying the generated artifact on M404 — a successful trace can
+  never evidence one; the checkpoint is `route_matches` on the final observed path, parameterized by
+  the READ step's `ROUTE` `input_evidence`, and deliberately *not* the handwritten heading condition
+  (the trace records no heading text; the compiler refuses to invent verification semantics);
+  generated artifacts live in the separate store root `capabilities/generated/` with the same
+  `name@version` (same contract and workflow; lineage = store root + `provenance.source`) beside
+  `compile_reports/`. **Amendment 1 (dependency proof):** `import cua.replay.transforms` executed
+  `cua/replay/__init__.py`, which loads the engine, resolver and result modules — so the planned
+  "pure leaf" edge was not leaf-clean; the transform implementation moved (`git mv`, byte-identical
+  logic) to `cua/artifact/transforms.py` and `cua/replay/transforms.py` became a re-export shim;
+  every M4/M6 import path is unchanged and a boundary test pins that importing the leaf loads no
+  replay module. **Amendment 2:** one parametrized failure test per validation mechanism rather
+  than a bespoke test per enum member.
+- **What was implemented:** `cua/artifact/{declaration,compile_report,compiler,transforms}.py`;
+  `cua/discovery/capabilities.py`; `ArtifactStore.report_path_for / save_compile_report /
+  load_compile_report` (additive); `tests/replay/zero_model_replay.py --artifact` with the guard
+  extended to `cua.artifact.compiler` and `cua.artifact.declaration` (and reporting
+  `artifact_unchanged`, `provenance_source`); `tests/evals/e02_compile_replay.py` (library + CLI +
+  20-item audit) and `tests/evals/test_e02_compile_replay.py` (E02, the M404 declared-outcome
+  verification, committed-file reproducibility); tests `tests/artifact/{test_compiler,
+  test_compiler_independence, test_declaration}.py`, `tests/discovery/test_capabilities.py`, M7
+  boundary section, store/zero-model additions. Committed outputs:
+  `capabilities/generated/read_savings_balance@1.0.0.json`,
+  `capabilities/generated/compile_reports/read_savings_balance@1.0.0.json`,
+  `evidence/replay/run_50600b9540ca/events.jsonl`. `schema.py`, `goal.py`, `trace.py`,
+  `discovery/__init__.py`, `artifact/__init__.py`, policy, `legacy_bank/`, the handwritten artifact,
+  the E01 evidence, `pyproject.toml` and `uv.lock` are untouched.
+- **Actual verification performed:** `uv run pytest -q` (850 passed + 1 live skip); `uv run pytest -m
+  browser -q` (35); `ruff check` + `ruff format --check`; `git diff --check`; grep for `.act(` in
+  `src/cua` (one call: `policy/action_gate.py:154`); fresh-interpreter `import cua.artifact.compiler`
+  loads none of `cua.replay*`, `cua.discovery*`, `cua.llm*`, `openai`, `google`, `playwright`;
+  fresh-interpreter `import cua.replay` loads neither the compiler nor the declaration; the official
+  record compiled in-process, then **E02 live** (real Chromium, in-process Legacy Bank on an
+  ephemeral port, real gate, real recorder, fresh guarded interpreter): 20/20 MUST-PASS —
+  `source_run_is_official`, `compile_deterministic`, `compile_ignores_discovered_outputs`,
+  `generated_validates_through_store`, `provenance_is_discovery_e01`,
+  `generated_differs_from_handwritten`, `no_member_id_or_balance_in_generated`,
+  `no_ref_or_selector_in_generated`, `no_model_text_in_generated`, `fill_is_input_ref_member_id`,
+  `checkpoint_parameterized`, `known_outcome_declared_not_discovered`, `replay_status_success`,
+  `replay_output_decimal_4120_75`, `replay_zero_model`, `replay_zero_provider_calls`,
+  `replay_evidence_identifies_compiled_artifact`, `every_dispatch_preceded_by_allow`,
+  `artifact_unchanged_by_replay`, `member_id_absent_from_replay_evidence`; M404 on the generated
+  artifact → `BUSINESS_OUTCOME/MEMBER_NOT_FOUND` at `s3_click`, READ never dispatched; the committed
+  artifact and report recompile byte-identically from the committed E01 record; grep of the
+  committed generated files and the E02 evidence for `M1001|M1002|M404|"ref"` (none — the only
+  balance string is the replay's own `RUN_COMPLETED` output `4120.75`, an observed synthetic value,
+  as in the M4 samples).
+- **Test/eval results:** 850 passed, 1 skipped (M1–M6 779 unchanged except the no-float scan now
+  reading the moved implementation module; new 71, counted by `--collect-only`: artifact +54
+  [compiler 43 incl. 32 parametrized failure records, independence 4, declaration 6, store +1],
+  discovery +2, boundaries +10 [5 new checks + 5 driver-neutral entries], zero-model +2, evals +3
+  [2 browser]). Browser: 35 (33 + E02 + M404).
+  Generated flagship: `s1_navigate /members/search` → `route_matches`; `s2_fill textbox "Member ID"
+  scope "group: Look up member"` ← `INPUT_REF(member_id)` → `value_equals`; `s3_click button "Search"`
+  → `route_matches /members/{member_id}`; `s4_read_savings_balance cell scope "table: Accounts > row:
+  Savings"` → `DECIMAL`; checkpoint `[route_matches /members/{member_id}]`; risks
+  SAFE_READ/REVERSIBLE_WRITE/SAFE_READ/SAFE_READ; `known_outcomes = [MEMBER_NOT_FOUND (DECLARED)]`.
+- **Bugs or incorrect assumptions discovered:** (1) the plan assumed `cua.replay.transforms` was a
+  leaf; importing it executes the replay package init and loads the engine (Amendment 1 — moved);
+  (2) the first I1 report evidence string quoted the literal model-placeholder token, tripping the
+  artifact's own no-leak scan — reworded; (3) the independence scan first read raw source text, so
+  the compiler's docstring mention of `events.jsonl` matched the `.json` literal rule — the scan now
+  covers AST string constants excluding docstrings. No production defect was found by E02; the
+  generated artifact replayed on the first live attempt.
+- **Fixes made:** the three above (one refactor, one wording, one test-side).
+- **Remaining limitations:** the generated checkpoint is route-only (intentional; see REPORT
+  Artifact schema); descriptors carry the verified `group:` scope with no minimization; known
+  outcomes are declared, not trace-learned; a CLICK that changes no route gets a weak-but-true
+  postcondition; SELECT compiles but has no live proof (no SELECT in the flagship); no CLI —
+  compile and replay are driven from `tests/evals`; no HITL suspension yet (step 16).
+- **Git commit:** `60c2a49` — feat: add deterministic artifact compiler with verified E02 (pushed
+  to `origin/main`), including the generated artifact, compile report, E02 evidence, D25 and A2.
+- **Presentation/pitch takeaway:** the model discovered the workflow once; a pure function turned
+  the persisted evidence of that run — nothing else — into a typed, parameterized artifact whose
+  every field carries its derivation rule; a model-free engine that cannot even import the compiler
+  replayed it on a member the model never saw and returned the right `Decimal`.
+
+#### Reviewer / benchmark signal
+
+- **Assignment signal:** "after a successful discovery run, the system must emit a capability
+  artifact" that is typed, versioned, parameterized, decoupled from the transcript (REQUIREMENTS §4),
+  and "replays … without invoking the LLM for any decision" (§5) — proven end to end (E02).
+- **Reference-project lesson applied:** compile from persisted evidence, not from live objects, so
+  what the compiler read is what the reviewer can audit; forbid the compiler in the replay
+  interpreter so "zero model" also means "zero compile-time reasoning at run time".
+- **What our implementation improves/clarifies:** the compiler refuses rather than guesses — no
+  fallback strategies, no invented checkpoint conditions, no string replacement, a closed failure
+  vocabulary; the handwritten bootstrap and the generated artifact are distinguishable by store
+  root and provenance, and a test proves the compiler cannot reach the former.
+- **Proof:** `tests/evals/test_e02_compile_replay.py` + `evidence/replay/run_50600b9540ca`,
+  `capabilities/generated/`, `tests/artifact/test_compiler.py`,
+  `tests/artifact/test_compiler_independence.py`, `tests/cua/test_boundaries.py` (M7 section),
+  `tests/replay/test_zero_model.py`.
+
 ## Decision corrections worth explaining
 
 | Initially proposed | Corrected to | Why it matters |
@@ -691,6 +811,13 @@ evidence vocabulary.
 | M6 plan: ambiguity refused twice → `MODEL_ERROR` (the generic rule) | `DEAD_END/AMBIGUOUS_TARGET` | Two equivalent Savings cells are a property of the UI — the same condition replay reports as `AMBIGUOUS_TARGET` — not a defect of the model's output. |
 | Engine marks every surface runtime error inside `act()` as `dispatched=True` (M4) | `dispatched` taken from the recorder's dispatch count on that path | `UnknownRefError` and a failing locator query happen *before* the driver op; the recorder is the ground truth for whether the boundary was crossed. |
 | Persist identifiers masked (`M1***`) or removed | Deterministic name-tagged placeholders (`<input:member_id>`) from the bound runtime inputs | Masking leaks; removal makes routes and alerts unreadable; the placeholder is non-reversible, deterministic, and keeps evidence useful. Unknown secrets in arbitrary prose remain a documented V1 limit rather than an implied DLP capability. |
+
+| M7 plan: compiler imports `cua.discovery.trace.NormalizedTrace` | Compiler consumes the persisted `DISCOVERY_ENDED` record (`cua.evidence.events`) | `cua.discovery`'s init loads `cua.llm` and `discovery.trace` imports `cua.artifact`: a cycle and a structural violation that would pull the model layer into replay; the persisted record is what a reviewer audits and the only form the official E01 exists in. |
+| M7 plan: `cua.replay.transforms` as a "pure leaf" edge for the compiler | Transform implementation moved to `cua/artifact/transforms.py`; replay re-exports | Importing a submodule executes the package init, which loads the replay engine — proven in a fresh interpreter before any compiler logic depended on it (Amendment 1). |
+| Reproduce the handwritten `MEMBER_NOT_FOUND` from the trace, or drop it | Declared beside the goal, labelled `DECLARED`, verified by replaying the generated artifact on M404 | A successful trace cannot evidence a business outcome; silently copying the handwritten detector would fabricate discovery evidence, and dropping it would make the generated artifact misreport "no such member" as a failure. |
+| Reproduce the handwritten heading checkpoint so the generated artifact matches it | Route-only checkpoint derived from the READ page's `ROUTE` evidence | The trace records no heading text; the compiler emits only verification semantics it can justify and refuses to invent stronger ones (documented as an intentional property, not a defect). |
+| `capability_name` and `compiler_version` as `compile()` parameters | Name comes from the declaration and must equal the trace's goal name; the compiler stamps its own version | A caller-supplied copy of either would be provenance the compiler did not establish. |
+| Export the compiler from `cua.artifact.__init__` | Explicit `cua.artifact.compiler` import only; the replay guard forbids it | Replay imports `cua.artifact`; exporting the compiler there would make "replay never loads the compiler" false by construction. |
 
 ## Evidence produced
 
@@ -764,8 +891,15 @@ evidence vocabulary.
 | Bound inputs are registered with the redactor before the first state-bearing event | `tests/discovery/test_agent_evidence.py::test_bound_inputs_are_registered_before_the_first_state_bearing_event` |
 | The normal suite is offline; `openai` is confined to one adapter; replay stays zero-model under a guard that forbids `openai` | `tests/cua/test_offline.py`, `tests/cua/test_boundaries.py` (M6 section), `tests/replay/test_zero_model.py` |
 
+| The official E01 record compiles deterministically into a schema-valid artifact proving I1–I6, ignoring the discovered values, without reading the handwritten artifact or the filesystem | `tests/artifact/test_compiler.py`, `tests/artifact/test_compiler_independence.py` |
+| A deficient record (unsuccessful, unparameterized input, unsupported action, ambiguous/unproven target, bad binding, missing/duplicate/unknown output, transform inconsistency, underivable success semantics, irreversible step, invalid declared outcome) never yields an artifact | `tests/artifact/test_compiler.py::test_a_deficient_record_fails_with_a_named_code_and_no_artifact[*]` and siblings |
+| The generated artifact replays M1002 → `Decimal("4120.75")` in a fresh interpreter forbidding the model layer, discovery and the compiler; M404 → `BUSINESS_OUTCOME`; the committed files are reproducible from the committed E01 record | `tests/evals/test_e02_compile_replay.py`, `evidence/replay/run_50600b9540ca`, `capabilities/generated/` |
+| The compiler reaches neither discovery, llm, a provider SDK, the driver nor the replay engine; `cua.artifact`'s init never imports it; the transforms leaf loads no replay module | `tests/cua/test_boundaries.py` (M7 section) |
+
 `evidence/` now holds `README.md`, four sample replay runs (L1 SUCCESS, L3 BUSINESS_OUTCOME, L4
-AMBIGUOUS_TARGET, L5a POLICY_DENIED) and the official E01 discovery run `discovery/run_e49e4d0cbe09`.
+AMBIGUOUS_TARGET, L5a POLICY_DENIED), the official E01 discovery run `discovery/run_e49e4d0cbe09`
+and the E02 replay of the generated artifact `replay/run_50600b9540ca`; `capabilities/generated/`
+holds the compiled artifact and its compile report.
 
 ## Production and evolution seams
 
@@ -822,9 +956,9 @@ AMBIGUOUS_TARGET, L5a POLICY_DENIED) and the official E01 discovery run `discove
 
 ## Next milestone
 
-**Milestone 6 — `LLMClient` + structured action output, `DiscoveryAgent` + normalized trace,
-E01** (ARCHITECTURE §15 steps 10–12). Discovery composes the same `EvidenceRecorder` (a
-`RunKind.DISCOVERY` schema bump plus the observation/model events it needs), drives every action
-through the same `ActionGate.dispatch`, and reuses `Redactor.redact_text` on model intent text.
-The boundary test's `google` rule narrows to `llm/` at that point; no provider SDK or credential
-is committed. Screenshots and HITL transitions follow at step 16.
+**Milestone 8 — minimum real same-session HITL** (ARCHITECTURE §15 step 16, §9, D17, D18): the
+engine suspends on `REQUIRE_INTERVENTION` instead of failing, the same headed Playwright session
+stays alive for the human, `InterventionRequest` / `HumanActionRecord` evidence, explicit hand-back
+with deterministic re-verification, `completed_by = HUMAN`, no repeat of a human-completed
+irreversible action. Then `scripts/verify.sh` / `verify_live.sh` and the essential evals; then
+README and REPORT completion.
