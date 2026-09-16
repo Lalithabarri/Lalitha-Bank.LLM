@@ -1,5 +1,6 @@
 """EvidenceRecorder: run bracket, step context, seq, and the one-failure-per-run discipline."""
 
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -25,6 +26,8 @@ from cua.policy import (
 )
 from cua.surface import ActResult, DispatchRecord, SurfaceDriverError
 from tests.evidence.memory_sink import MemoryEvidence
+
+_REF_TOKEN = re.compile(r"(?<![A-Za-z0-9_])(?:f\d+)?e\d+(?![A-Za-z0-9_])")
 
 TS = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -256,7 +259,8 @@ def test_completed_and_failed_notifications_never_copy_the_ref_and_mark_after_di
     }
     assert failed.payload.error_type == "SurfaceDriverError"
     assert failed.payload.error_message == "TimeoutError: <ref> vanished at http://h?t=[REDACTED]"
-    assert "e10" not in memory.text and "e12" not in memory.text
+    # refs must be gone as *tokens*; random hex event/run ids may legitimately contain "e10"
+    assert _REF_TOKEN.search(memory.text) is None
 
     recorder, memory = recorder_with(MemoryEvidence(fail_on={EventType.ACTION_COMPLETED}))
     begin(recorder)

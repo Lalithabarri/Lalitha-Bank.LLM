@@ -1,5 +1,6 @@
 """ReplayEngine against the scripted surface: every terminal path, zero dispatch where promised."""
 
+import re
 from decimal import Decimal
 
 import pytest
@@ -556,6 +557,7 @@ def test_invalid_input_still_leaves_run_started_and_run_failed_evidence():
 
 
 SENTINEL = "SENTINEL-7Q9Z-DO-NOT-PERSIST"
+_REF_TOKEN = re.compile(r"(?<![A-Za-z0-9_])(?:f\d+)?e\d+(?![A-Za-z0-9_])")
 
 
 def test_a_sentinel_runtime_input_is_redacted_from_urls_alerts_and_error_text():
@@ -578,6 +580,8 @@ def test_a_sentinel_runtime_input_is_redacted_from_urls_alerts_and_error_text():
         "Error: navigation to http://fake.test/x?token=[REDACTED] failed for "
         "<input:member_id> (<ref>)"
     )
-    assert SENTINEL not in memory.text and "e12" not in memory.text
+    assert SENTINEL not in memory.text
+    # the ref must be gone as a *token*: random hex event/run ids may legitimately contain "e12"
+    assert _REF_TOKEN.search(memory.text) is None
     # The in-memory result keeps the unredacted text: redaction is the persistence boundary.
     assert SENTINEL in result.failure.message

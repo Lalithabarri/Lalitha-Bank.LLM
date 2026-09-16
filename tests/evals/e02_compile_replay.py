@@ -7,9 +7,11 @@ decisions (ARCHITECTURE §10 eval matrix; §15 step 14).
        compiler) -> SUCCESS, savings_balance == Decimal("4120.75")
 
 Run as ``python -m tests.evals.e02_compile_replay [--capabilities-root DIR] [--evidence-root DIR]
-[--compile-only]``. Neither the compiler nor the replay ever receives the handwritten Milestone 4
-artifact; it is loaded here only to assert the generated one differs from it. No provider SDK is
-involved anywhere: this eval runs offline, in the normal suite, with the loopback socket guard.
+[--compile-only [--run-id RUN]]`` (``--compile-only`` compiles any persisted discovery run, by
+default the official E01). Neither the compiler nor the replay ever receives the handwritten
+Milestone 4 artifact; it is loaded here only to assert the generated one differs from it. No
+provider SDK is involved anywhere: this eval runs offline, in the normal suite, with the loopback
+socket guard.
 """
 
 from __future__ import annotations
@@ -57,13 +59,18 @@ REPLAY_CHRONOLOGY = (
 )
 
 
-def official_record() -> DiscoveryEndedPayload:
-    store = EvidenceStore(ROOT / "evidence")
-    events = store.read_events(store.events_path(RunKind.DISCOVERY, OFFICIAL_E01_RUN_ID))
+def discovery_record(evidence_root: Path, run_id: str) -> DiscoveryEndedPayload:
+    """The persisted terminal record of any discovery run (the compiler's only input)."""
+    store = EvidenceStore(evidence_root)
+    events = store.read_events(store.events_path(RunKind.DISCOVERY, run_id))
     last = events[-1]
-    assert last.event_type is EventType.DISCOVERY_ENDED
+    assert last.event_type is EventType.DISCOVERY_ENDED, last.event_type
     assert isinstance(last.payload, DiscoveryEndedPayload)
     return last.payload
+
+
+def official_record() -> DiscoveryEndedPayload:
+    return discovery_record(ROOT / "evidence", OFFICIAL_E01_RUN_ID)
 
 
 def compile_record(
@@ -265,15 +272,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capabilities-root", default=None)
     parser.add_argument("--evidence-root", default=None)
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument(
+        "--run-id",
+        default=OFFICIAL_E01_RUN_ID,
+        help="discovery run to compile (under --evidence-root; default: the official E01)",
+    )
     args = parser.parse_args(argv)
     capabilities_root = (
         Path(args.capabilities_root) if args.capabilities_root else Path(tempfile.mkdtemp())
     )
     if args.compile_only:
-        persisted = persist(compile_record(), capabilities_root)
+        record = discovery_record(
+            Path(args.evidence_root) if args.evidence_root else ROOT / "evidence", args.run_id
+        )
+        persisted = persist(compile_record(record), capabilities_root)
         print(
             json.dumps(
-                {"artifact": str(persisted.artifact_path), "report": str(persisted.report_path)}
+                {
+                    "discovery_run_id": record.trace.discovery_run_id,
+                    "artifact": str(persisted.artifact_path),
+                    "report": str(persisted.report_path),
+                }
             )
         )
         return 0
