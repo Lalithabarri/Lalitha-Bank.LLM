@@ -1,11 +1,13 @@
 # LegacyBank Capability Compiler
 
+[![ci](https://github.com/Lalithabarri/Lalitha-Bank.LLM/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Lalithabarri/Lalitha-Bank.LLM/actions/workflows/ci.yml)
+
 Teach the AI once. Replay without it.
 
 A real LLM drives a legacy banking console **once** — observe, decide, act, under a policy gate —
 until the goal is met. The successful trace is **compiled** into a typed, versioned, parameterized
-capability artifact. From then on a deterministic engine **replays** that artifact for any member
-with **zero model decisions**. Every automated action passes through one policy chokepoint; an
+capability artifact. From then on a deterministic engine **replays** that artifact for other members in the
+target with **zero model decisions**. Every automated action passes through one policy chokepoint; an
 irreversible action (a money transfer) is never dispatched by automation — the **same live browser
 session** is handed to a human, and automation resumes only after it has **deterministically
 verified** what the human did. Every claim below is backed by a committed eval and committed
@@ -48,14 +50,19 @@ evidence. Production-style architecture, synthetic target, single process.
 ## Verify it in one command
 
 ```sh
-uv sync && uv run playwright install chromium   # one-time
-scripts/verify.sh                                # offline: no API key, no human, loopback only
+uv sync && uv run playwright install chromium   # one-time: fetches locked deps + Chromium
+scripts/verify.sh                                # offline: no API key, no provider call, no human
 ```
 
 `verify.sh` runs lint, the structural boundary checks, every eval above, the whole suite and the
 public-artifact audit, and prints one `PASS` line per eval (about 30 s; `--no-browser` skips the
-real-Chromium proofs). The two proofs that need the outside world — a live model and a human —
-are audited from their committed runs and can be re-run with `scripts/verify_live.sh`.
+real-Chromium proofs). It needs no `OPENAI_API_KEY`, makes no live OpenAI call, asks nothing of a
+human and touches no live banking target; the verification workload talks only to the in-process
+console on localhost (the suite refuses any non-loopback socket). Only the one-time dependency
+install above may reach a package registry. The same script runs on every push to `main` on a
+clean Ubuntu runner ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), no secrets). The two
+proofs that need the outside world — a live model and a human — are audited from their committed
+runs and can be re-run with `scripts/verify_live.sh`.
 
 ## The handoff, as it happened (E08, `run_af80d82668bc`)
 
@@ -68,6 +75,15 @@ The chronology is one `events.jsonl` with one run id and one session id; the scr
 referenced by run-relative path, sha256 and media type (bytes never enter the JSONL). The pixels
 show the synthetic member because screenshots are not redacted — a documented V1 limit; every
 structured line is.
+
+## The target
+
+`uv run legacy-bank` serves the synthetic Legacy Bank Operations Console on `:8000`: a
+server-rendered Flask app with real accessibility semantics (roles, labels, captions, row headers)
+and no test ids. The flagship capability reads the Savings cell below; the transfer capability
+drives the form behind "Transfer funds" up to the gated "Confirm transfer" click.
+
+![Member M1001 in the Legacy Bank Operations Console](docs/screenshots/legacy_bank_member_m1001.png)
 
 ## Quick demo path
 

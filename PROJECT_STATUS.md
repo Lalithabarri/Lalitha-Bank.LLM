@@ -12,9 +12,23 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
+**Final polish — COMPLETE (presentation only; M1–M8 and packaging frozen).** Claim precision:
+`scripts/verify.sh`, README and this ledger now say exactly what the offline run needs (no
+`OPENAI_API_KEY`, no provider call, no human, no live target; the workload is loopback-only; the
+one-time `uv sync --frozen` may reach a package registry) and README no longer claims replay "for
+any member" — the evidence is M1001 discovery → M1002 replay → M404 declared outcome. REPORT
+compressed 1,742 → 1,450 words, same seven headings. LegacyBank visual polish (`907862e`): CSS in
+`base.html` plus class hooks on `body`/`table`/non-alert `p` only; the AI-mode ARIA snapshot of all
+twelve screen states (refs stripped) is byte-identical before and after, so no artifact, capture or
+digest moved — two rules (`cursor: pointer`, a flex fieldset) were dropped because Playwright
+surfaced them. CI (`08d3468`): `.github/workflows/ci.yml` runs `scripts/verify.sh` on a clean
+Ubuntu runner with no secrets, `contents: read`, pinned action tags; first run green
+(888 passed incl. 36 real-Chromium, 1m42s), one badge in README, one polished target screenshot
+under `docs/screenshots/`. The official E08 PRE/POST screenshots are untouched.
+
 **Submission packaging — COMPLETE (no product changes).** Reviewer-first README (thesis, diagram,
 proof table E01/Compiler/E02–E10, one-command verification, the E08 PRE/POST screenshots, demo
-path, "what live testing caught"); `scripts/verify.sh` (offline: no key, no human, loopback only —
+path, "what live testing caught"); `scripts/verify.sh` (offline: no key, no provider call, no human; the workload is loopback-only —
 lint, structure, every named eval reusing the tests that already prove it, the full suite, and
 `scripts/public_audit.py` over everything committed); `scripts/verify_live.sh` (E01 with a key,
 E08/E09 with a terminal; never rewrites the official runs); REPORT compressed to the seven headings
@@ -1131,9 +1145,6 @@ the compiled artifact and its compile report.
 
 ## Next milestone
 
-**Submission packaging** (ARCHITECTURE §15 steps 18–19, 22–23): `scripts/verify.sh` (offline, no
-key, no human, no network) and `scripts/verify_live.sh`; the essential evals as named scripts
-reusing the tests that already prove them (E03 zero-model, E04 business outcome, E05 ambiguity,
-E06 policy denial, E10 secret persistence); README demo path + proven-claims table; REPORT
-completion within 1–3 pages; fresh-clone verification. Reviewer console only if everything above
-is done.
+None planned. The repository is the submission: every offline claim is re-derived by
+`scripts/verify.sh` locally and by GitHub Actions on each push; the two live proofs are re-runnable
+with `scripts/verify_live.sh`.

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Offline verification — fresh clone, no API key, no human, no network beyond loopback.
+# Offline verification from a fresh clone: no OPENAI_API_KEY, no live OpenAI/provider call, no
+# human interaction, no live banking target. The verification workload itself talks only to the
+# in-process Legacy Bank on localhost (the suite refuses any non-loopback socket). The one thing
+# that may touch the outside world is the initial `uv sync --frozen`, which can fetch locked
+# dependencies from a package registry on a machine that has not installed them yet.
 #
 #   scripts/verify.sh              full: lint, structure, every named eval, the whole suite, audit
 #   scripts/verify.sh --no-browser skip the real-Chromium proofs (they otherwise run headless)
