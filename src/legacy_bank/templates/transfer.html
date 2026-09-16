@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Transfer Funds - Member {{ member.member_id }} - LegacyBank Operations Console{% endblock %}
+{% block body_class %}page-transfer{% endblock %}
 {% block content %}
 <h1>Transfer Funds &mdash; Member {{ member.member_id }}</h1>
-<table>
+<table class="balances">
   <caption>Current balances</caption>
   {% for label, balance in account_rows %}
   <tr><th scope="row">{{ label }}</th><td>{{ balance }}</td></tr>
@@ -14,7 +15,7 @@
 <form method="post" action="{{ url_for('bank.transfer_form', member_id=member.member_id) }}">
   <fieldset>
     <legend>Transfer details</legend>
-    <table>
+    <table class="form-grid">
       <tr>
         <td><label for="from_account">From account</label></td>
         <td>
@@ -43,5 +44,5 @@
     <button type="submit">Review transfer</button>
   </fieldset>
 </form>
-<p><a href="{{ url_for('bank.member_detail', member_id=member.member_id) }}">Back to member</a></p>
+<p class="actions"><a href="{{ url_for('bank.member_detail', member_id=member.member_id) }}">Back to member</a></p>
 {% endblock %}

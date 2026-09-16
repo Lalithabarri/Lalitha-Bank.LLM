@@ -2,23 +2,180 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}LegacyBank Operations Console{% endblock %}</title>
 <style>
-  body { font-family: "Times New Roman", Times, serif; font-size: 13px; background: #c0c0c0; margin: 0; }
-  header { background: #000080; color: #fff; padding: 4px 8px; font-weight: bold; }
-  nav { background: #e0e0e0; border-bottom: 1px solid #808080; padding: 3px 8px; }
-  nav a { margin-right: 12px; }
-  main { background: #fff; margin: 8px; padding: 8px; border: 1px solid #808080; }
-  h1 { font-size: 16px; margin: 0 0 8px 0; }
-  table { border-collapse: collapse; margin: 6px 0; }
-  th, td { border: 1px solid #808080; padding: 2px 8px; text-align: left; }
-  caption { text-align: left; font-weight: bold; }
-  th[scope="row"] { background: #f0f0f0; font-weight: normal; }
-  fieldset { border: 1px solid #808080; padding: 6px; margin: 0 0 8px 0; display: inline-block; }
-  footer { font-size: 11px; color: #404040; padding: 0 8px 8px 8px; }
+  /* Presentation only. Semantics (roles, names, table/row/group scope, text) are what the
+     automation observes; nothing below adds, removes, renames or hides a node. */
+  :root {
+    --bg: #e6e9ee;
+    --surface: #ffffff;
+    --surface-alt: #f3f5f8;
+    --line: #cbd2db;
+    --line-strong: #98a3b3;
+    --text: #1c2430;
+    --muted: #5a6677;
+    --brand: #12315e;
+    --brand-rule: #c9a227;
+    --accent: #1d4f91;
+    --accent-hover: #163d72;
+    --danger: #9a1f1f;
+    --danger-hover: #7c1717;
+    --danger-line: #d9a3a3;
+    --danger-bg: #fbf1f0;
+    --warn-bg: #fff8e5;
+    --warn-line: #e3c063;
+    --warn-text: #6b4e00;
+    --ok-bg: #edf7ee;
+    --ok-line: #8cc497;
+    --ok-text: #1f5a2c;
+    --focus: #2b6fd6;
+  }
+  html { background: var(--bg); }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    color: var(--text);
+    font: 13px/1.45 "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  /* Chrome: brand bar, primary navigation, footer */
+  header {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--brand); color: #fff;
+    padding: 10px 24px; font-size: 15px; font-weight: 600; letter-spacing: .01em;
+    border-bottom: 3px solid var(--brand-rule);
+  }
+  header::before {
+    content: ""; flex: none; width: 14px; height: 14px; border-radius: 2px;
+    border: 2px solid var(--brand-rule);
+    background: linear-gradient(135deg, var(--brand-rule) 50%, transparent 50%);
+  }
+  nav { background: var(--surface); border-bottom: 1px solid var(--line); padding: 0 24px; display: flex; gap: 4px; }
+  nav a {
+    display: inline-block; padding: 8px 12px; color: var(--accent); text-decoration: none;
+    font-weight: 600; border-bottom: 2px solid transparent;
+  }
+  nav a:hover { background: var(--surface-alt); border-bottom-color: var(--accent); }
+  footer { margin-top: auto; font-size: 11px; color: var(--muted); padding: 0 24px 18px; text-align: center; letter-spacing: .02em; }
+
+  /* Page frame */
+  main {
+    box-sizing: border-box; width: min(960px, calc(100% - 32px)); margin: 20px auto;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(20, 30, 50, .06);
+    padding: 22px 28px 26px;
+  }
+  h1 {
+    font-size: 20px; font-weight: 600; letter-spacing: -.01em;
+    margin: 0 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  }
+  a { color: var(--accent); }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--focus); outline-offset: 2px;
+  }
+
+  /* Ledger tables: caption as a card header, row headers as a label column */
+  table {
+    border-collapse: separate; border-spacing: 0; margin: 0 0 18px; min-width: 320px;
+    border: 1px solid var(--line); border-radius: 0 0 3px 3px; background: var(--surface);
+  }
+  caption {
+    caption-side: top; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: .04em;
+    color: var(--muted); background: var(--surface-alt);
+    border: 1px solid var(--line); border-bottom: 0; border-radius: 3px 3px 0 0; padding: 6px 12px;
+  }
+  th, td { padding: 7px 12px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
+  tr:last-child > th, tr:last-child > td { border-bottom: 0; }
+  th[scope="col"] { background: var(--surface-alt); color: var(--muted); font-size: 12px; font-weight: 600; }
+  th[scope="row"] {
+    background: var(--surface-alt); color: var(--muted); font-weight: 500;
+    white-space: nowrap; border-right: 1px solid var(--line);
+  }
+  table.balances td, table.summary td { font-variant-numeric: tabular-nums; }
+  table.balances th[scope="col"]:last-child, table.balances td { text-align: right; }
+  table.balances td { font-weight: 600; min-width: 140px; }
+  table.summary { min-width: 480px; }
+  table.summary tr:last-child > td { font-weight: 600; }
+  table.receipt tr:first-child > td {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 600; letter-spacing: .02em;
+  }
+
+  /* Forms */
+  fieldset {
+    border: 1px solid var(--line); border-radius: 3px; background: var(--surface);
+    padding: 14px 18px 16px; margin: 0 0 18px; min-width: 0;
+  }
+  legend { font-weight: 600; padding: 0 6px; }
+  label { font-weight: 600; }
+  input[type="text"], select {
+    font: inherit; color: var(--text); background: var(--surface);
+    padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 2px;
+  }
+  input[type="text"]:focus-visible, select:focus-visible { border-color: var(--focus); outline-offset: 1px; }
+  table.form-grid { border: 0; margin: 0 0 14px; min-width: 0; background: transparent; }
+  table.form-grid td { border: 0; padding: 6px 8px 6px 0; }
+  table.form-grid td:first-child { color: var(--muted); padding-right: 18px; white-space: nowrap; }
+  table.form-grid td:first-child label { font-weight: 500; }
+  body.page-search label { margin-right: 8px; }
+  body.page-search button { margin-left: 8px; }
+
+  /* Actions: one filled primary per screen, everything else outlined or plain */
+  button {
+    font: inherit; font-weight: 600; line-height: 1.2;
+    padding: 7px 16px; border-radius: 2px;
+    color: #fff; background: var(--accent); border: 1px solid var(--accent-hover);
+  }
+  button:hover { background: var(--accent-hover); }
+  button:active { transform: translateY(1px); }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 0; color: var(--muted); }
+  .actions a {
+    display: inline-block; padding: 6px 12px; border-radius: 2px; text-decoration: none; font-weight: 600;
+    color: var(--accent); background: var(--surface); border: 1px solid var(--line-strong);
+  }
+  .actions a:hover { background: var(--surface-alt); border-color: var(--accent); }
+  body.page-detail .actions a:first-child { color: #fff; background: var(--accent); border-color: var(--accent-hover); }
+  body.page-detail .actions a:first-child:hover { background: var(--accent-hover); }
+  .hint { color: var(--muted); margin: 0 0 8px; }
+
+  /* Notices: alert (problem), status (posted), warning (irreversible) */
+  p[role="alert"], p[role="status"], .notice {
+    margin: 0 0 16px; padding: 10px 14px; border: 1px solid; border-left-width: 4px; border-radius: 2px;
+  }
+  p[role="alert"] b, p[role="status"] b, .notice b { font-weight: 600; }
+  p[role="alert"] { background: var(--danger-bg); border-color: var(--danger-line); border-left-color: var(--danger); color: var(--danger); }
+  p[role="status"] { background: var(--ok-bg); border-color: var(--ok-line); border-left-color: var(--ok-text); color: var(--ok-text); }
+  .notice-warning { background: var(--warn-bg); border-color: var(--warn-line); border-left-color: #c9962a; color: var(--warn-text); }
+
+  /* Review: the irreversible step is visually distinct from every other action */
+  body.page-review form {
+    display: flex; align-items: center; gap: 14px; margin: 0 0 14px; padding: 14px 16px;
+    background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: 3px;
+  }
+  body.page-review form::before {
+    content: ""; flex: none; width: 22px; height: 22px;
+    background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%239a1f1f' d='M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z'/%3E%3C/svg%3E");
+  }
+  body.page-review button { background: var(--danger); border-color: var(--danger-hover); }
+  body.page-review button:hover { background: var(--danger-hover); }
+
+  /* Two-column summaries on wide screens */
+  body.page-detail main, body.page-complete main {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); column-gap: 24px;
+    align-items: start; align-content: start;
+  }
+  body.page-detail main > h1, body.page-detail main > p,
+  body.page-complete main > h1, body.page-complete main > p { grid-column: 1 / -1; }
+  body.page-detail table, body.page-complete table { width: 100%; }
+
+  @media (max-width: 720px) {
+    header, nav { padding-left: 16px; padding-right: 16px; }
+    main { width: calc(100% - 24px); margin: 12px auto; padding: 16px; }
+    body.page-detail main, body.page-complete main { display: block; }
+    table { width: 100%; min-width: 0; }
+  }
 </style>
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
 <header>LegacyBank Operations Console &mdash; Member Services v2.3</header>
 <nav aria-label="Main">
   <a href="{{ url_for('bank.search') }}">Member Search</a>

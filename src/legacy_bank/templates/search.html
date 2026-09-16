@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Member Search - LegacyBank Operations Console{% endblock %}
+{% block body_class %}page-search{% endblock %}
 {% block content %}
 <h1>Member Search</h1>
 {% if error %}
@@ -13,5 +14,5 @@
     <button type="submit">Search</button>
   </fieldset>
 </form>
-<p>Enter the member number exactly as printed on the account card (e.g. M1001).</p>
+<p class="hint">Enter the member number exactly as printed on the account card (e.g. M1001).</p>
 {% endblock %}
