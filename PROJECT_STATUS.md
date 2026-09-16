@@ -12,7 +12,19 @@ claim. Flagship: `read_savings_balance(member_id)`. Escalation: `transfer_funds(
 
 ## Current milestone
 
-**Milestone 8 — COMPLETE: minimum real same-session human-in-the-loop + official E08/E09.**
+**Submission packaging — COMPLETE (no product changes).** Reviewer-first README (thesis, diagram,
+proof table E01/Compiler/E02–E10, one-command verification, the E08 PRE/POST screenshots, demo
+path, "what live testing caught"); `scripts/verify.sh` (offline: no key, no human, loopback only —
+lint, structure, every named eval reusing the tests that already prove it, the full suite, and
+`scripts/public_audit.py` over everything committed); `scripts/verify_live.sh` (E01 with a key,
+E08/E09 with a terminal; never rewrites the official runs); REPORT compressed to the seven headings
+(~1,700 words, heterogeneity design written out, failure-mode table, no skeleton markers);
+`--run-id` on the compile CLI so the demo path compiles a fresh discovery; fresh-clone verification
+recorded below. Committed as `50a1d6b`, pushed to `origin/main`.
+
+Milestone 8 is COMPLETE: committed as `f39febc`, pushed to `origin/main`.
+
+**Milestone 8 — minimum real same-session human-in-the-loop + official E08/E09.**
 The IRREVERSIBLE "Confirm transfer" click of the handwritten `transfer_funds@1.0.0` stops
 automation at the gate (`REQUIRE_INTERVENTION`, zero driver dispatch); the engine suspends inside
 the same run, takes PRE evidence (observation digest + PNG screenshot), moves the one shared
@@ -25,8 +37,7 @@ AUTOMATION, and replay continues past the step. **Official E08/E09 = `evidence/r
 `SUCCESS`, `transfer_reference = TXN-000001`, pre/post screenshots hashed, no runtime input, no
 model event, 26/26 audit. Unverifiable completion → `FAILURE / UNKNOWN_COMMIT_STATE`,
 `safe_to_retry=false`. The first manual attempt exposed and fixed an ARIA-reader defect (below).
-888 tests passed (36 real-Chromium) + 1 live skip; ruff clean. Committed as `f39febc`, pushed
-to `origin/main`.
+888 tests passed (36 real-Chromium) + 1 live skip; ruff clean.
 
 Milestone 7 is COMPLETE: committed as `60c2a49`, pushed to `origin/main`.
 
@@ -53,9 +64,8 @@ Milestone 3A is COMPLETE: committed as `057d1d7`, pushed to `origin/main`.
 Milestone 2 is COMPLETE: committed as `b0dff2e`, pushed to `origin/main`.
 Milestone 1 is COMPLETE: committed as `362b0f1`, pushed to `origin/main`.
 
-Active next: **submission packaging** — `scripts/verify.sh` / `verify_live.sh`, the essential
-evals as named scripts reusing existing tests (E03–E06, E10), README demo path and proven-claims
-table, REPORT completion (seven headings, 1–3 pages), fresh-clone verification. No new features.
+Active next: **submission** — push is the deliverable; the reviewer console (ARCHITECTURE §13) is
+optional and only if time remains. No new product features.
 
 ## Completed milestones
 
@@ -896,6 +906,40 @@ product capability: a human takes over the same live session where money moves, 
 - **Proof:** `evidence/replay/run_af80d82668bc`, `tests/evals/e08_hitl_live.py` +
   `test_e08_evidence.py`, `tests/hitl/test_handoff.py`, `tests/hitl/test_control.py`,
   `tests/replay/test_replay_live.py` (s1→s4), `tests/surface/test_aria_reader.py` (quoted scalars).
+
+### Submission packaging — verify scripts · reviewer-first README · REPORT · public audit
+
+Maps to ARCHITECTURE §15 steps 18–19, 22. No product code changed; M1–M8 remain frozen.
+
+- **What was done:** `README.md` rewritten reviewer-first (leads with proof, not counts);
+  `scripts/verify.sh` (offline; unsets any key; runs lint, `tests/cua` structure, then one named
+  block per eval — E01 offline audit, Compiler, E02, E03, E04, E05, E06, E07, E08/E09, E10 — each
+  reusing the committed tests that already prove the claim, then the full suite and the public
+  audit; `--no-browser` deselects the real-Chromium proofs); `scripts/verify_live.sh e01|e08|all`
+  (refuses without `OPENAI_API_KEY` / a TTY; writes new runs, never the official ones; bash 3.2
+  compatible); `scripts/public_audit.py` (credential shapes outside `tests/`, no tracked `.env`,
+  no absolute user paths or hostname in evidence/capabilities/docs, no member id or ref in any
+  `events.jsonl`, every line redacted, every referenced screenshot present with a matching sha256,
+  no stray binaries, every capability validates and carries no id/ref/selector); REPORT compressed
+  to ~1,700 words with the heterogeneity design and a failure-mode table; `tests/evals/e02_compile_replay.py`
+  gained `--run-id` (compile any persisted discovery run; default the official E01).
+- **Actual verification performed:** `scripts/verify.sh` end to end (≈30 s: 11 PASS blocks, full
+  suite 888 passed / 1 deselected, public audit 0 findings over 181 tracked files);
+  `scripts/verify_live.sh` refusals (no key → exit 2, no TTY → exit 2, bad argument → usage);
+  the documented demo path executed without credentials (compile-only of the official record →
+  zero-model live replay of the generated file → `SUCCESS`, `4120.75`); fresh clone into a scratch
+  directory → `scripts/verify.sh` (see the freeze note below); ruff over `scripts/` too.
+- **Bugs or incorrect assumptions discovered:** (1) the first `verify_live.sh` used a bash-4
+  `;;&` fall-through and an unguarded empty-array expansion, both rejected by macOS bash 3.2 —
+  rewritten; (2) the credential regex matched the tail of the word "disk" followed by "-then-redact" in
+  ARCHITECTURE prose — anchored on a word boundary; test sentinel keys are exempt by design;
+  (3) the fresh-clone run failed once in the M5 sentinel test, unreproducible on re-run: it
+  asserted the plain substring `"e12"` was absent from the persisted text, but random hex
+  event/run ids (`evt_…`) can legitimately contain `e12` (a few percent per run) — the test now
+  applies the ref-*token* rule the audits use; 0 failures in 15 further runs.
+- **Remaining limitations:** no CLI beyond the eval runners; the reviewer console is not built;
+  screenshot pixels show the synthetic member (D19).
+- **Git commit:** `50a1d6b` — docs: package the submission (pushed to `origin/main`).
 
 ## Decision corrections worth explaining
 
