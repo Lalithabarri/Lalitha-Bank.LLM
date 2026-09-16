@@ -9,6 +9,8 @@ and the evidence writer; no evidence payload can hold a ref.
 Milestone 6: the OpenAI SDK is confined to one adapter under llm/; discovery/ never calls
 Surface.act and never catches broadly; importing any deterministic layer — or cua.discovery /
 cua.llm themselves — loads no provider SDK; DiscoveryDeps is the only deps type with a model slot.
+Milestone 8: hitl/ stays below policy (no surface/replay/policy imports) and the intervention
+handler contract carries no surface; replay reaches hitl but still no driver or model.
 Milestone 7: the compiler lives in artifact/ and reaches neither discovery, llm, a provider SDK
 nor the replay engine (the transforms it shares with replay are a leaf); cua.artifact's package
 init never imports it, so replay never loads it; the transform implementation is a leaf.
@@ -67,6 +69,8 @@ DRIVER_NEUTRAL_MODULES = [
     "policy/action_gate.py",
     "hitl/__init__.py",
     "hitl/control.py",
+    "hitl/intervention.py",
+    "hitl/cli.py",
     "artifact/__init__.py",
     "artifact/schema.py",
     "artifact/store.py",
@@ -310,7 +314,16 @@ def test_replay_deps_has_no_field_that_could_hold_a_model():
     from cua.replay import ReplayDeps
 
     fields = set(ReplayDeps.__dataclass_fields__)
-    assert fields == {"surface", "action_gate", "clock", "evidence"}
+    # M8 adds the shared ControlOwner (ARCHITECTURE §7 lists it) and the human seam; neither can
+    # hold a model: the handler protocol receives only an InterventionRequest.
+    assert fields == {
+        "surface",
+        "action_gate",
+        "clock",
+        "evidence",
+        "control_owner",
+        "intervention",
+    }
     for name in fields:
         assert not any(k in name.lower() for k in ("llm", "model", "gemini", "client")), name
 
@@ -557,7 +570,14 @@ def test_discovery_deps_is_the_only_deps_type_with_a_model_slot():
         "evidence",
         "llm",
     }
-    assert set(ReplayDeps.__dataclass_fields__) == {"surface", "action_gate", "clock", "evidence"}
+    assert set(ReplayDeps.__dataclass_fields__) == {
+        "surface",
+        "action_gate",
+        "clock",
+        "evidence",
+        "control_owner",
+        "intervention",
+    }
 
 
 def test_no_discovery_evidence_payload_can_hold_a_ref_or_a_snapshot():

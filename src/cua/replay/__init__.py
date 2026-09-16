@@ -44,6 +44,7 @@ from cua.replay.resolver import (
     TargetResolver,
 )
 from cua.replay.result import (
+    CompletedBy,
     FailureCode,
     FailureDetail,
     OutcomeDetail,
@@ -62,6 +63,7 @@ from cua.replay.transforms import (
 )
 
 __all__ = [
+    "CompletedBy",
     "PYTHON_TYPES",
     "Ambiguous",
     "BindingError",

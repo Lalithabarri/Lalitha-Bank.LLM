@@ -11,12 +11,14 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from cua.evidence import (
+    ArtifactRef,
     EventType,
     EvidenceError,
     EvidenceEvent,
     EvidenceSink,
     Redactor,
     RunKind,
+    artifact_ref,
     redacted_form,
 )
 
@@ -31,11 +33,14 @@ class MemorySink:
         fail_on: Iterable[EventType] = (),
         fail_when: FailWhen | None = None,
         fail_close: bool = False,
+        fail_artifacts: Iterable[str] = (),
     ) -> None:
         self._redactor = redactor
         self.fail_on = set(fail_on)
         self.fail_when = fail_when
         self.fail_close = fail_close
+        self.fail_artifacts = set(fail_artifacts)  # artifact-name substrings that fail to store
+        self.artifacts: dict[str, bytes] = {}  # relative path -> bytes (screenshots, 1.2)
         self.events: list[EvidenceEvent] = []
         self.lines: list[str] = []
         self.raw_seen: list[EvidenceEvent] = []  # what the recorder handed over (unredacted)
@@ -56,6 +61,15 @@ class MemorySink:
             self.closed = True
             raise EvidenceError("simulated close failure")
         self.closed = True
+
+    def write_artifact(self, name: str, data: bytes, media_type: str) -> ArtifactRef:
+        if self.closed:
+            raise EvidenceError("memory sink is closed")
+        if any(marker in name for marker in self.fail_artifacts):
+            raise EvidenceError(f"simulated artifact storage failure for {name}")
+        ref = artifact_ref(name, data, media_type)
+        self.artifacts[ref.path] = data
+        return ref
 
     # --- convenience -----------------------------------------------------------------------
 
@@ -82,11 +96,13 @@ class MemoryEvidence:
         fail_when: FailWhen | None = None,
         fail_open: bool = False,
         fail_close: bool = False,
+        fail_artifacts: Iterable[str] = (),
     ) -> None:
         self.fail_on = set(fail_on)
         self.fail_when = fail_when
         self.fail_open = fail_open
         self.fail_close = fail_close
+        self.fail_artifacts = set(fail_artifacts)
         self.opened: list[tuple[RunKind, str, Redactor]] = []
         self.sinks: list[MemorySink] = []
 
@@ -95,7 +111,11 @@ class MemoryEvidence:
         if self.fail_open:
             raise EvidenceError(f"simulated: cannot open evidence for {run_id}")
         sink = MemorySink(
-            redactor, fail_on=self.fail_on, fail_when=self.fail_when, fail_close=self.fail_close
+            redactor,
+            fail_on=self.fail_on,
+            fail_when=self.fail_when,
+            fail_close=self.fail_close,
+            fail_artifacts=self.fail_artifacts,
         )
         self.sinks.append(sink)
         return sink

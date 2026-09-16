@@ -20,16 +20,20 @@ and reads a file back, failing loudly on a malformed line or an unredacted event
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
-from cua.evidence.events import EventType, EvidenceError, EvidenceEvent, RunKind
+from cua.evidence.events import ArtifactRef, EventType, EvidenceError, EvidenceEvent, RunKind
 from cua.evidence.redaction import Redactor
 
 EVENTS_FILE = "events.jsonl"
+ARTIFACTS_DIR = "artifacts"
+_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
 class EvidenceSink(Protocol):
@@ -38,6 +42,26 @@ class EvidenceSink(Protocol):
     def write(self, event: EvidenceEvent) -> None: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class ArtifactSink(Protocol):
+    """Optional sink capability (1.2): store one binary evidence artifact beside the events —
+    intervention screenshots. Returns a safe run-relative reference; bytes never enter JSONL."""
+
+    def write_artifact(self, name: str, data: bytes, media_type: str) -> ArtifactRef: ...
+
+
+def artifact_ref(name: str, data: bytes, media_type: str) -> ArtifactRef:
+    """The reference every sink must return for ``name``/``data`` (shared by fakes)."""
+    if not _ARTIFACT_NAME.match(name):
+        raise EvidenceError(f"not a safe artifact name: {name!r}")
+    return ArtifactRef(
+        path=f"{ARTIFACTS_DIR}/{name}",
+        sha256=hashlib.sha256(data).hexdigest(),
+        media_type=media_type,
+        size_bytes=len(data),
+    )
 
 
 def redacted_form(event: EvidenceEvent, redactor: Redactor) -> EvidenceEvent:
@@ -106,6 +130,22 @@ class JsonlEvidenceWriter:
             self._fh.close()
         except OSError as exc:
             raise EvidenceError(f"cannot close evidence file {self._path}: {exc}") from exc
+
+    def write_artifact(self, name: str, data: bytes, media_type: str) -> ArtifactRef:
+        """Store ``data`` at ``<run dir>/artifacts/<name>`` (never overwriting) and fsync it."""
+        if self._closed:
+            raise EvidenceError(f"evidence file {self._path} is closed; refusing artifact {name}")
+        ref = artifact_ref(name, data, media_type)
+        target = self._path.parent / ref.path
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "xb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError as exc:
+            raise EvidenceError(f"cannot store evidence artifact {ref.path}: {exc}") from exc
+        return ref
 
 
 class EvidenceStore:

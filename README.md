@@ -31,4 +31,19 @@ uv run legacy-bank --fault-mode ambiguous_savings   # duplicate "Savings" row on
 
 Synthetic members: `M1001`, `M1002` (valid), `M404` (absent). All data is fake and in-memory.
 
+## Human-in-the-loop (verified, same session)
+
+The irreversible "Confirm transfer" is never dispatched by automation. The replay engine suspends
+inside the same run, the human clicks it in the **same headed browser session**, hands back in the
+terminal, and the engine verifies the real page state before continuing past the step.
+
+```sh
+# manual, headed, no model — needs a real terminal; click "Confirm transfer" when prompted, type done
+CUA_LIVE_HITL=1 uv run python -m tests.evals.e08_hitl_live --live --evidence-root evidence
+```
+
+Official E08/E09 evidence: `evidence/replay/run_af80d82668bc/` (`events.jsonl` + `artifacts/`
+pre/post screenshots); re-audited offline by `tests/evals/test_e08_evidence.py`. Simulated
+handoff tests: `tests/hitl/test_handoff.py`.
+
 _Full demo path and evidence documentation arrive with later milestones._

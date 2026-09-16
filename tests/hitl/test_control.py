@@ -1,6 +1,6 @@
 import pytest
 
-from cua.hitl import ControlOwner, ControlOwnerState
+from cua.hitl import ControlOwner, ControlOwnerState, IllegalTransition
 
 
 def test_default_owner_is_automation():
@@ -27,9 +27,44 @@ def test_test_only_constructor_state_is_honoured(state):
     assert not owner.is_automation
 
 
-def test_state_is_read_only_until_transitions_exist():
+def test_state_is_not_assignable():
     owner = ControlOwner()
     with pytest.raises(AttributeError):
         owner.state = ControlOwnerState.HUMAN  # type: ignore[misc]
-    for transition in ("escalate", "accept", "done", "verified", "abort"):
-        assert not hasattr(owner, transition), f"{transition} arrives at step 16, not before"
+
+
+# --- Milestone 8: the four edges of ARCHITECTURE §9 and nothing else (H1) ----------------------
+
+EDGES = {
+    "escalate": (ControlOwnerState.AUTOMATION, ControlOwnerState.PENDING_HUMAN),
+    "accept": (ControlOwnerState.PENDING_HUMAN, ControlOwnerState.HUMAN),
+    "hand_back": (ControlOwnerState.HUMAN, ControlOwnerState.RETURNING),
+    "restore": (ControlOwnerState.RETURNING, ControlOwnerState.AUTOMATION),
+}
+
+
+def test_the_full_handoff_cycle_and_no_human_to_automation_shortcut():
+    owner = ControlOwner()
+    owner.escalate()
+    owner.accept()
+    assert owner.state is ControlOwnerState.HUMAN and not owner.is_automation
+    with pytest.raises(IllegalTransition):
+        owner.restore()  # HUMAN -> AUTOMATION does not exist
+    owner.hand_back()
+    assert owner.state is ControlOwnerState.RETURNING and not owner.is_automation
+    owner.restore()
+    assert owner.is_automation
+
+
+@pytest.mark.parametrize("edge", sorted(EDGES))
+@pytest.mark.parametrize("start", list(ControlOwnerState))
+def test_every_edge_is_legal_from_exactly_its_source_state(edge, start):
+    owner = ControlOwner(start)
+    source, target = EDGES[edge]
+    if start is source:
+        getattr(owner, edge)()
+        assert owner.state is target
+    else:
+        with pytest.raises(IllegalTransition, match=edge):
+            getattr(owner, edge)()
+        assert owner.state is start  # an illegal edge changes nothing

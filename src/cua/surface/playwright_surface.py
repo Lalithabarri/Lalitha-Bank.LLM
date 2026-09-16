@@ -161,6 +161,14 @@ class PlaywrightSurface:
             raise RuntimeError("surface is closed" if self._closed else "surface is not open")
         return self._page
 
+    # --- screenshot (ScreenshotCapable; evidence only) ----------------------------------------
+
+    def capture_screenshot(self) -> bytes:
+        """PNG bytes of the current viewport. One driver call; never consulted for decisions."""
+        page = self._require_page()
+        with _driver_calls():
+            return page.screenshot(type="png")
+
     # --- observe -----------------------------------------------------------------------------
 
     def observe(self) -> SurfaceSnapshot:

@@ -25,6 +25,10 @@ from cua.domain import SurfaceElement
 _LINE = re.compile(r"^(?P<indent>\s*)- (?P<body>.*)$")
 _ROLE = re.compile(r"^(?P<role>[a-z]+)")
 _NAME = re.compile(r'^\s*"(?P<name>(?:[^"\\]|\\.)*)"')
+# Playwright emits trailing text (a textbox value, an alert message, a free text node) as a
+# YAML scalar and quotes it only when YAML would otherwise misread it — e.g. a number-like
+# value such as ``"500.00"``. The quotes are serialisation, not page content.
+_QUOTED_SCALAR = re.compile(r'^"(?P<text>(?:[^"\\]|\\.)*)"$')
 _ATTR = re.compile(r"^\s*\[(?P<key>[a-z]+)(?:=(?P<value>[^\]]*))?\]")
 
 # Nodes whose semantics are carried by the elements they contain (or by context_hint / the text
@@ -109,9 +113,17 @@ def parse_ai_snapshot(text: str) -> list[AriaNode]:
     return roots
 
 
+def _unquote_scalar(text: str) -> str:
+    """A fully quoted YAML scalar becomes its content; anything else is returned verbatim."""
+    match = _QUOTED_SCALAR.match(text)
+    if match is None:
+        return text
+    return match.group("text").replace('\\"', '"').replace("\\\\", "\\")
+
+
 def _parse_node(body: str) -> AriaNode:
     if body.startswith("text:"):
-        return AriaNode(role="text", text=body[len("text:") :].strip())
+        return AriaNode(role="text", text=_unquote_scalar(body[len("text:") :].strip()))
     role_match = _ROLE.match(body)
     if role_match is None:
         raise ValueError(f"unrecognised aria node: {body!r}")
@@ -129,7 +141,7 @@ def _parse_node(body: str) -> AriaNode:
         rest = rest[attr_match.end() :]
     rest = rest.strip()
     if rest.startswith(":"):
-        trailing = rest[1:].strip()
+        trailing = _unquote_scalar(rest[1:].strip())
         if trailing:
             node.text = trailing
     elif rest:

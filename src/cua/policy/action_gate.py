@@ -90,6 +90,11 @@ class ActionGate:
         self._control_owner = control_owner
         self._observer: GateObserver = observer or NullGateObserver()
 
+    @property
+    def control_owner(self) -> ControlOwner:
+        """The one owner this gate reads (Milestone 8: the engine asserts it shares this object)."""
+        return self._control_owner
+
     def authorize(self, request: GateRequest) -> GateResult:
         target_name = request.target.accessible_name if request.target else None
         policy_risk = classify_risk(

@@ -39,9 +39,12 @@ def test_exactly_three_terminal_statuses():
     assert {s.value for s in TerminalStatus} == {"SUCCESS", "BUSINESS_OUTCOME", "FAILURE"}
 
 
-def test_failure_code_vocabulary_is_the_m4_minimum_plus_evidence():
-    """M4's eight codes plus EVIDENCE_ERROR (M5): evidence failure is its own domain."""
+def test_failure_code_vocabulary_is_the_m4_minimum_plus_evidence_plus_hitl():
+    """M4's eight codes, EVIDENCE_ERROR (M5), and the two post-human codes of M8: an unknown
+    commit state and a verified-but-abandoned intervention. Terminal statuses stay three."""
     assert {c.value for c in FailureCode} == {
+        "UNKNOWN_COMMIT_STATE",
+        "INTERVENTION_ABANDONED",
         "AMBIGUOUS_TARGET",
         "TARGET_NOT_FOUND",
         "POLICY_DENIED",

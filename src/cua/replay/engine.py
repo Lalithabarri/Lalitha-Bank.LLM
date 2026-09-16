@@ -35,6 +35,20 @@ written) the action was not attempted and the step is ``dispatched=False``; if a
 for the run — not even a ``RUN_FAILED`` describing the evidence failure — and the in-memory
 result carries the story. A terminal write failure turns a SUCCESS into ``EVIDENCE_ERROR`` with
 its outputs discarded: outputs are authoritative only on a proven SUCCESS.
+
+Human intervention (Milestone 8, ARCHITECTURE §9, D17, D18): when the gate answers
+``REQUIRE_INTERVENTION`` for a non-READ step and an ``InterventionHandler`` is configured, the
+engine does not fail — it suspends inside the same ``run()``: PRE evidence (observation digest +
+screenshot) is taken while automation still owns control; the shared ``ControlOwner`` moves
+AUTOMATION -> PENDING_HUMAN -> HUMAN; the handler (which holds nothing but the request) blocks
+until the human hands back with DONE or ABORT; HUMAN -> RETURNING; a fresh bounded observation
+evaluates the step's own postcondition (the deterministic verifier); POST evidence is taken from
+the observation the verdict was made on. Only VERIFIED_COMPLETED + DONE restores AUTOMATION and
+continues after the step, which is marked ``completed_by=HUMAN`` and never dispatched.
+VERIFIED_COMPLETED + ABORT ends the run ``INTERVENTION_ABANDONED``; anything unverifiable ends it
+``UNKNOWN_COMMIT_STATE`` — both ``safe_to_retry=False``, both leave the owner in RETURNING so
+nothing can dispatch afterwards. Evidence that fails before the human is prompted fails closed;
+evidence that fails after the human may have acted never becomes a reason to repeat anything.
 """
 
 from __future__ import annotations
@@ -47,7 +61,29 @@ from pydantic import field_validator
 from cua.artifact import CapabilityArtifact
 from cua.domain import ActionType, DomainModel, SurfaceSnapshot
 from cua.domain.ids import new_run_id
-from cua.evidence import EvidenceError, EvidenceRecorder, RunKind
+from cua.evidence import (
+    ArtifactRef,
+    ControlTransferredPayload,
+    EvidenceError,
+    EvidenceRecorder,
+    HandBackPayload,
+    InterventionRequestedPayload,
+    InterventionVerifiedPayload,
+    RunKind,
+    TargetSummary,
+)
+from cua.hitl import (
+    ControlOwner,
+    ControlOwnerState,
+    HandBack,
+    HandBackKind,
+    InterventionHandler,
+    InterventionRequest,
+    SemanticTargetSummary,
+    VerificationOutcome,
+    new_request_id,
+    snapshot_digest,
+)
 from cua.policy import ActionGate, GateDecision, GateResult, ResolvedTarget, RiskTier
 from cua.replay.binding import (
     BindingError,
@@ -59,7 +95,12 @@ from cua.replay.binding import (
     normalize_base_url,
 )
 from cua.replay.clock import Clock
-from cua.replay.conditions import BoundConditionLike, detect_known_outcome, evaluate_all
+from cua.replay.conditions import (
+    BoundConditionLike,
+    describe,
+    detect_known_outcome,
+    evaluate_all,
+)
 from cua.replay.resolver import (
     Ambiguous,
     NotFound,
@@ -68,6 +109,7 @@ from cua.replay.resolver import (
     TargetResolver,
 )
 from cua.replay.result import (
+    CompletedBy,
     FailureCode,
     FailureDetail,
     OutcomeDetail,
@@ -82,6 +124,7 @@ from cua.replay.summaries import run_started_payload, terminal_payload
 from cua.replay.transforms import TransformError, apply_transform, validate_output
 from cua.surface.contract import (
     ActResult,
+    ScreenshotCapable,
     Surface,
     SurfaceAction,
     SurfaceDriverError,
@@ -129,17 +172,27 @@ class ReplayDeps:
     action_gate: ActionGate
     clock: Clock
     evidence: EvidenceRecorder
+    # Milestone 8. ``control_owner`` must be the very object the gate reads (asserted at run
+    # start): one owner, not two synchronized copies. ``intervention`` is the human seam; None
+    # keeps REQUIRE_INTERVENTION a terminal failure (M4 behaviour).
+    control_owner: ControlOwner
+    intervention: InterventionHandler | None = None
 
 
 class _Stop(Exception):
     """Internal unwind carrying the terminal detail. Never leaves ``ReplayEngine.run``."""
 
     def __init__(
-        self, *, failure: FailureDetail | None = None, outcome: OutcomeDetail | None = None
+        self,
+        *,
+        failure: FailureDetail | None = None,
+        outcome: OutcomeDetail | None = None,
+        snapshot: SurfaceSnapshot | None = None,
     ) -> None:
         super().__init__(failure.code if failure else outcome.code if outcome else "")
         self.failure = failure
         self.outcome = outcome
+        self.snapshot = snapshot  # the observation the verdict was made on, when there is one
 
 
 @dataclass
@@ -151,6 +204,7 @@ class _StepState:
     gate_decision: GateDecision | None = None
     effective_risk: RiskTier | None = None
     dispatched: bool = False
+    completed_by: CompletedBy | None = None
 
     def record(self) -> StepRecord:
         return StepRecord(
@@ -162,6 +216,7 @@ class _StepState:
             gate_decision=self.gate_decision,
             effective_risk=self.effective_risk,
             dispatched=self.dispatched,
+            completed_by=self.completed_by,
         )
 
 
@@ -172,6 +227,22 @@ class _RunState:
     steps: list[_StepState] = field(default_factory=list)
     outputs: dict[str, OutputValue] = field(default_factory=dict)
     current: _StepState | None = None  # whose observation counter is being advanced
+    view: BoundArtifact | None = None  # the bound artifact (known outcomes for verification)
+
+
+@dataclass
+class _Handoff:
+    """One intervention's evidence bookkeeping (in memory; never a decision input)."""
+
+    request_id: str
+    pre_digest: str
+    pre_screenshot: ArtifactRef | None = None
+    post_digest: str = "unobservable"
+    post_screenshot: ArtifactRef | None = None
+    evidence_failure: EvidenceError | None = None  # first failure after the human was prompted
+
+    def note(self) -> str | None:
+        return None if self.evidence_failure is None else str(self.evidence_failure)
 
 
 class ReplayEngine:
@@ -187,11 +258,13 @@ class ReplayEngine:
     # --- entry point -------------------------------------------------------------------------
 
     def run(self, artifact: CapabilityArtifact, inputs: Mapping[str, str]) -> RunResult:
+        self._assert_wiring()
         state = _RunState(run_id=new_run_id(), session_id=self._deps.surface.session_id)
         try:
             try:
                 self._begin_evidence(artifact, inputs, state)
                 view = self._bind(artifact, inputs)
+                state.view = view
                 state.steps = [
                     _StepState(step, index) for index, step in enumerate(view.steps, start=1)
                 ]
@@ -225,6 +298,20 @@ class ReplayEngine:
             return self._record_terminal(result)
         finally:
             self._deps.evidence.end_run()
+
+    def _assert_wiring(self) -> None:
+        """Composition invariants that must hold before anything is observed or dispatched."""
+        deps = self._deps
+        if deps.action_gate.control_owner is not deps.control_owner:
+            raise RuntimeError(
+                "engine wiring violated: ReplayDeps.control_owner must be the same ControlOwner "
+                "object the ActionGate reads (one owner, never two copies)"
+            )
+        if deps.intervention is not None and not isinstance(deps.surface, ScreenshotCapable):
+            raise RuntimeError(
+                "engine wiring violated: an intervention handler requires a ScreenshotCapable "
+                "surface (intervention evidence contract)"
+            )
 
     def _terminal(self, artifact: CapabilityArtifact, state: _RunState, stop: _Stop) -> RunResult:
         if state.current is not None:
@@ -387,6 +474,11 @@ class ReplayEngine:
                 target=_as_target(element),
             )
 
+        if step_state.completed_by is CompletedBy.HUMAN:
+            # Verified inside the intervention branch; nothing was dispatched and nothing is.
+            step_state.status = StepStatus.COMPLETED
+            return
+        assert act_result is not None
         if step.action is ActionType.READ:
             self._record_output(artifact, state, step, act_result)
         else:
@@ -415,7 +507,9 @@ class ReplayEngine:
         *,
         snapshot: SurfaceSnapshot | None,
         target: ResolvedTarget | None,
-    ) -> ActResult:
+    ) -> ActResult | None:
+        """The gate's answer for one action. Returns None only when a human completed the step
+        (``step_state.completed_by == HUMAN``); nothing was dispatched in that case."""
         step = step_state.step
         gate = self._deps.action_gate
         recorded_before = self._deps.evidence.dispatch_count
@@ -457,7 +551,12 @@ class ReplayEngine:
         if gate_result.decision is GateDecision.DENY:
             raise _Stop(failure=_gate_failure(step, gate_result, FailureCode.POLICY_DENIED))
         if gate_result.decision is GateDecision.REQUIRE_INTERVENTION:
-            raise _Stop(failure=_gate_failure(step, gate_result, FailureCode.INTERVENTION_REQUIRED))
+            if self._deps.intervention is None or step.action is ActionType.READ:
+                raise _Stop(
+                    failure=_gate_failure(step, gate_result, FailureCode.INTERVENTION_REQUIRED)
+                )
+            self._intervene(state, step_state, gate_result, target)
+            return None
         assert act_result is not None  # ALLOW: the gate dispatched exactly once
         step_state.dispatched = True
         self._assert_dispatch_recorded(state)
@@ -522,17 +621,19 @@ class ReplayEngine:
         conditions: list[BoundConditionLike],
         known_outcomes: list[BoundKnownOutcome],
         label: str,
-    ) -> None:
+    ) -> SurfaceSnapshot:
+        """Bounded observation until every condition holds; returns the observation it held on.
+        On timeout the raised ``_Stop`` carries the final observation."""
         clock = self._deps.clock
         deadline = clock.now() + self._config.condition_timeout_s
         while True:
             snapshot = self._observe(state, step_id)
             outcome = detect_known_outcome(known_outcomes, snapshot)
             if outcome is not None:
-                raise _Stop(outcome=_outcome_detail(outcome, step_id))
+                raise _Stop(outcome=_outcome_detail(outcome, step_id), snapshot=snapshot)
             passed, results, failing = evaluate_all(conditions, snapshot)
             if passed:
-                return
+                return snapshot
             if clock.now() >= deadline:
                 assert failing is not None
                 result = results[failing]
@@ -546,9 +647,256 @@ class ReplayEngine:
                         ),
                         expected=result.expected,
                         observed=SnapshotSummary.of(snapshot),
-                    )
+                    ),
+                    snapshot=snapshot,
                 )
             clock.sleep(self._config.poll_interval_s)
+
+    # --- human intervention (Milestone 8) ------------------------------------------------------
+
+    def _intervene(
+        self,
+        state: _RunState,
+        step_state: _StepState,
+        gate_result: GateResult,
+        target: ResolvedTarget | None,
+    ) -> None:
+        """Suspend for a human inside the same run; see the module docstring for the contract."""
+        deps = self._deps
+        step = step_state.step
+        owner = deps.control_owner
+        handler = deps.intervention
+        assert handler is not None and step.postcondition is not None
+        request_id = new_request_id()
+
+        # PRE evidence, while automation still owns control: any failure here fails closed —
+        # no ownership is granted and nothing irreversible could have been authorized.
+        pre_snapshot = self._observe(state, step.step_id)
+        handoff = _Handoff(request_id=request_id, pre_digest=snapshot_digest(pre_snapshot))
+        handoff.pre_screenshot = self._capture(step.step_id, request_id, "pre", handoff=None)
+
+        request = InterventionRequest(
+            request_id=request_id,
+            run_id=state.run_id,
+            session_id=state.session_id,
+            artifact_id=deps.evidence.artifact_id or "",
+            step_id=step.step_id,
+            step_index=step_state.index,
+            reason=gate_result.explanation,
+            risk=gate_result.risk.value,
+            requested_action_summary=_action_summary(step, target),
+            semantic_target_summary=(
+                SemanticTargetSummary(
+                    role=target.role,
+                    accessible_name=target.accessible_name,
+                    context_hint=target.context_hint,
+                )
+                if target
+                else None
+            ),
+            verification_requirement=describe(step.postcondition),
+            created_at=deps.evidence.wall_clock(),
+            owner_before=ControlOwnerState.AUTOMATION.value,
+            owner_after=ControlOwnerState.HUMAN.value,
+        )
+        self._emit_before_human(
+            step.step_id,
+            lambda: deps.evidence.intervention_requested(
+                InterventionRequestedPayload(
+                    request_id=request_id,
+                    reason=request.reason,
+                    risk=request.risk,
+                    requested_action_summary=request.requested_action_summary,
+                    target=TargetSummary(
+                        role=target.role,
+                        accessible_name=target.accessible_name,
+                        context_hint=target.context_hint,
+                        value=target.value,
+                    )
+                    if target
+                    else None,
+                    verification_requirement=request.verification_requirement,
+                    owner_before=request.owner_before,
+                    owner_after=request.owner_after,
+                    pre_observation_digest=handoff.pre_digest,
+                    pre_screenshot=handoff.pre_screenshot,
+                )
+            ),
+        )
+        self._transfer(owner, handoff, "escalate", before_human=True, step_id=step.step_id)
+        self._transfer(owner, handoff, "accept", before_human=True, step_id=step.step_id)
+
+        # The human owns the session from here. Nothing below may dispatch, retry or repeat.
+        hand_back: HandBack = handler.intervene(request)
+        self._emit_after_human(
+            handoff,
+            lambda: deps.evidence.hand_back(
+                HandBackPayload(
+                    request_id=request_id, hand_back=hand_back.kind.value, note=hand_back.note
+                )
+            ),
+        )
+        self._transfer(owner, handoff, "hand_back", before_human=False, step_id=step.step_id)
+
+        # Deterministic verification of the real browser state: the step's own postcondition.
+        observed_before = step_state.observations
+        outcome, final = self._verify_human_step(state, step)
+        observations = step_state.observations - observed_before
+        if final is not None:
+            handoff.post_digest = snapshot_digest(final)
+            handoff.post_screenshot = self._capture(
+                step.step_id, request_id, "post", handoff=handoff
+            )
+        completed_by = (
+            CompletedBy.HUMAN if outcome is VerificationOutcome.VERIFIED_COMPLETED else None
+        )
+        self._emit_after_human(
+            handoff,
+            lambda: deps.evidence.intervention_verified(
+                InterventionVerifiedPayload(
+                    request_id=request_id,
+                    hand_back=hand_back.kind.value,
+                    outcome=outcome.value,
+                    completed_by=completed_by.value if completed_by else None,
+                    observations=observations,
+                    pre_observation_digest=handoff.pre_digest,
+                    post_observation_digest=handoff.post_digest,
+                    pre_screenshot=handoff.pre_screenshot,
+                    post_screenshot=handoff.post_screenshot,
+                    evidence_note=handoff.note(),
+                )
+            ),
+        )
+        observed = SnapshotSummary.of(final) if final is not None else None
+
+        if outcome is not VerificationOutcome.VERIFIED_COMPLETED:
+            raise _Stop(
+                failure=FailureDetail(
+                    code=FailureCode.UNKNOWN_COMMIT_STATE,
+                    step_id=step.step_id,
+                    message=(
+                        f"after the human handed back ({hand_back.kind.value}) the fresh "
+                        "observation did not establish the irreversible step's postcondition; "
+                        "whether the operation committed is unknown — never retried"
+                        + (f"; evidence: {handoff.note()}" if handoff.evidence_failure else "")
+                    ),
+                    expected=describe(step.postcondition),
+                    observed=observed,
+                    safe_to_retry=False,
+                ),
+                snapshot=final,
+            )
+        step_state.completed_by = CompletedBy.HUMAN
+        if handoff.evidence_failure is not None:
+            raise _Stop(
+                failure=FailureDetail(
+                    code=FailureCode.EVIDENCE_ERROR,
+                    step_id=step.step_id,
+                    message=(
+                        "the human's irreversible action was deterministically verified as "
+                        "committed, but the required intervention evidence could not be "
+                        f"completed: {handoff.note()}; never retried"
+                    ),
+                    expected="intervention evidence persisted",
+                    observed=observed,
+                    safe_to_retry=False,
+                ),
+                snapshot=final,
+            )
+        if hand_back.kind is HandBackKind.ABORT:
+            raise _Stop(
+                failure=FailureDetail(
+                    code=FailureCode.INTERVENTION_ABANDONED,
+                    step_id=step.step_id,
+                    message=(
+                        "the human's irreversible action was verified as committed; automation "
+                        "was not resumed at the operator's request (abort)"
+                    ),
+                    expected="operator hand-back with 'done' to continue",
+                    observed=observed,
+                    safe_to_retry=False,
+                ),
+                snapshot=final,
+            )
+        self._transfer(owner, handoff, "restore", before_human=False, step_id=step.step_id)
+        if handoff.evidence_failure is not None:
+            raise _Stop(failure=_evidence_failure(step.step_id, handoff.evidence_failure))
+
+    def _verify_human_step(
+        self, state: _RunState, step: BoundStep
+    ) -> tuple[VerificationOutcome, SurfaceSnapshot | None]:
+        assert state.view is not None and step.postcondition is not None
+        try:
+            final = self._wait_for(
+                state, step.step_id, [step.postcondition], state.view.known_outcomes, "verification"
+            )
+        except _Stop as stop:
+            if stop.outcome is not None:
+                raise  # a declared business outcome is reported as such
+            assert stop.failure is not None
+            if stop.failure.code in (FailureCode.POSTCONDITION_FAILED, FailureCode.SURFACE_ERROR):
+                return VerificationOutcome.UNKNOWN_COMMIT_STATE, stop.snapshot
+            raise
+        return VerificationOutcome.VERIFIED_COMPLETED, final
+
+    def _capture(
+        self, step_id: str, request_id: str, phase: str, *, handoff: _Handoff | None
+    ) -> ArtifactRef | None:
+        """PNG capture + storage. Before the human (``handoff`` None): any failure fails closed.
+        After the human: failures are recorded on the handoff and never change the outcome."""
+        surface = self._deps.surface
+        assert isinstance(surface, ScreenshotCapable)
+        name = f"intervention_{request_id}_{phase}.png"
+        try:
+            data = surface.capture_screenshot()
+        except _SURFACE_RUNTIME_ERRORS as exc:
+            if handoff is None:
+                raise _Stop(failure=_surface_failure(step_id, f"{phase} screenshot", exc)) from exc
+            handoff.evidence_failure = handoff.evidence_failure or EvidenceError(
+                f"{phase} screenshot capture failed: {type(exc).__name__}: {exc}"
+            )
+            return None
+        try:
+            return self._deps.evidence.store_artifact(name, data, "image/png")
+        except EvidenceError as exc:
+            if handoff is None:
+                raise _Stop(failure=_evidence_failure(step_id, exc)) from exc
+            handoff.evidence_failure = handoff.evidence_failure or exc
+            return None
+
+    def _transfer(
+        self, owner: ControlOwner, handoff: _Handoff, edge: str, *, before_human: bool, step_id: str
+    ) -> None:
+        source = owner.state
+        getattr(owner, edge)()
+        emit = lambda: self._deps.evidence.control_transferred(  # noqa: E731
+            ControlTransferredPayload(
+                request_id=handoff.request_id,
+                from_owner=source.value,
+                to_owner=owner.state.value,
+                trigger=edge,
+            )
+        )
+        if before_human:
+            self._emit_before_human(step_id, emit)
+        else:
+            self._emit_after_human(handoff, emit)
+
+    @staticmethod
+    def _emit_before_human(step_id: str, emit) -> None:
+        try:
+            emit()
+        except EvidenceError as exc:
+            raise _Stop(failure=_evidence_failure(step_id, exc)) from exc
+
+    @staticmethod
+    def _emit_after_human(handoff: _Handoff, emit) -> None:
+        if handoff.evidence_failure is not None:
+            return  # the recorder refuses further writes; nothing more is attempted
+        try:
+            emit()
+        except EvidenceError as exc:
+            handoff.evidence_failure = exc
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -561,6 +909,13 @@ def _as_target(element) -> ResolvedTarget:
         context_hint=element.context_hint,
         value=element.value,
     )
+
+
+def _action_summary(step: BoundStep, target: ResolvedTarget | None) -> str:
+    if target is None:
+        return step.action.value
+    where = f" in '{target.context_hint}'" if target.context_hint else ""
+    return f"{step.action.value} {target.role} '{target.accessible_name}'{where}"
 
 
 def _outcome_detail(outcome: BoundKnownOutcome, step_id: str | None) -> OutcomeDetail:

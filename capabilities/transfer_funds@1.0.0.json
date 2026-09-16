@@ -1,0 +1,150 @@
+{
+  "artifact_id": "transfer_funds@1.0.0",
+  "capability_name": "transfer_funds",
+  "schema_version": "1.0",
+  "capability_version": "1.0.0",
+  "description": "Transfer an amount from a member's Checking account to their Savings account in the Legacy Bank Operations Console. The confirmation is irreversible and is never dispatched automatically: a human confirms it in the same live session.",
+  "inputs": {
+    "member_id": {
+      "type": "STRING",
+      "required": true,
+      "description": "Member number, as printed on the account card"
+    },
+    "amount": {
+      "type": "DECIMAL",
+      "required": true,
+      "description": "Amount in USD to move from Checking to Savings, e.g. 500.00"
+    }
+  },
+  "outputs": {
+    "transfer_reference": {
+      "type": "STRING",
+      "description": "The console's transaction reference for the posted transfer (TXN-…)"
+    }
+  },
+  "steps": [
+    {
+      "step_id": "s1_open_transfer",
+      "description": "Open the member's transfer form.",
+      "action": "NAVIGATE",
+      "route": "/members/{member_id}/transfer",
+      "risk": "SAFE_READ",
+      "postcondition": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            { "role": "textbox", "name": "Amount", "scope": "group: Transfer details" }
+          ]
+        }
+      }
+    },
+    {
+      "step_id": "s2_enter_amount",
+      "description": "Enter the amount (accounts stay at the form defaults: Checking to Savings).",
+      "action": "FILL",
+      "target": {
+        "strategies": [
+          { "role": "textbox", "name": "Amount", "scope": "group: Transfer details" }
+        ]
+      },
+      "value": { "kind": "INPUT_REF", "input_name": "amount" },
+      "risk": "REVERSIBLE_WRITE",
+      "postcondition": {
+        "type": "value_equals",
+        "target": {
+          "strategies": [
+            { "role": "textbox", "name": "Amount", "scope": "group: Transfer details" }
+          ]
+        },
+        "value": { "kind": "INPUT_REF", "input_name": "amount" }
+      }
+    },
+    {
+      "step_id": "s3_review",
+      "description": "Submit the form for review.",
+      "action": "CLICK",
+      "target": {
+        "strategies": [
+          { "role": "button", "name": "Review transfer", "scope": "group: Transfer details" }
+        ]
+      },
+      "risk": "REVERSIBLE_WRITE",
+      "postcondition": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            { "role": "button", "name": "Confirm transfer" }
+          ]
+        }
+      }
+    },
+    {
+      "step_id": "s4_confirm",
+      "description": "Confirm the transfer. IRREVERSIBLE: the gate requires a human, who clicks this control in the same browser session; the postcondition is how the human's action is verified.",
+      "action": "CLICK",
+      "target": {
+        "strategies": [
+          { "role": "button", "name": "Confirm transfer" }
+        ]
+      },
+      "risk": "IRREVERSIBLE",
+      "postcondition": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            { "role": "status", "text_contains": "The transfer has been posted." }
+          ]
+        }
+      }
+    },
+    {
+      "step_id": "s5_read_reference",
+      "description": "Read the posted transaction's reference from the Transaction table.",
+      "action": "READ",
+      "target": {
+        "strategies": [
+          { "role": "cell", "scope": "table: Transaction > row: Reference" }
+        ]
+      },
+      "output": "transfer_reference",
+      "risk": "SAFE_READ"
+    }
+  ],
+  "success_checkpoint": [
+    {
+      "type": "route_matches",
+      "route": "/members/{member_id}/transfer/complete"
+    },
+    {
+      "type": "element_present",
+      "target": {
+        "strategies": [
+          { "role": "status", "text_contains": "The transfer has been posted." }
+        ]
+      }
+    }
+  ],
+  "known_outcomes": [
+    {
+      "code": "MEMBER_NOT_FOUND",
+      "terminal_status": "BUSINESS_OUTCOME",
+      "detector": {
+        "type": "element_present",
+        "target": {
+          "strategies": [
+            { "role": "alert", "text_contains": "No member found for {member_id}." }
+          ]
+        }
+      },
+      "description": "The console reports no member with the requested id."
+    }
+  ],
+  "provenance": {
+    "source": "handwritten",
+    "compiled_at": "2026-09-16T00:00:00Z",
+    "discovery_run_id": null,
+    "model_id": null,
+    "compiler_version": null,
+    "goal_summary": "Move an amount from Checking to Savings for a member, with human confirmation of the irreversible step"
+  }
+}

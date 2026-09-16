@@ -40,7 +40,13 @@ TITLES = {
     "/members/search": "Member Search - LegacyBank Operations Console",
     "/members/M1001": "Member M1001 - LegacyBank Operations Console",
     "/members/M1002": "Member M1002 - LegacyBank Operations Console",
+    "/members/M1001/transfer": "Transfer Funds - Member M1001 - LegacyBank Operations Console",
+    "/members/M1001/transfer/complete": (
+        "Transfer Complete - Member M1001 - LegacyBank Operations Console"
+    ),
 }
+TRANSFER_PATH = "/members/M1001/transfer"
+TRANSFER_COMPLETE_PATH = "/members/M1001/transfer/complete"
 
 MEMBERS = {"M1001": "B_detail_M1001", "M1002": "C_detail_M1002"}
 
@@ -68,12 +74,14 @@ class ScriptedSurface:
                 "G_detail_M1001_ambiguous" if ambiguous else "B_detail_M1001"
             ),
             "/members/M1002": fixture_text("C_detail_M1002"),
+            TRANSFER_PATH: fixture_text("D_transfer_form"),
         }
         if pages:
             self.pages.update(pages)
         self.path = "about:blank"
         self.typed: dict[str, str] = {}  # accessible name -> typed value on the current page
         self.not_found_for: str | None = None
+        self.reviewing = False  # the transfer form was submitted for review (same path)
         self._elements: list[SurfaceElement] = []
         self._refs_valid = False
         self._step_index = 0
@@ -147,6 +155,10 @@ class ScriptedSurface:
 
         return self._attempt(record, operate)
 
+    def capture_screenshot(self) -> bytes:
+        """Deterministic fake PNG-like bytes naming the current page (ScreenshotCapable)."""
+        return b"\x89PNG\r\n\x1a\n" + b"scripted " + self.path.encode("utf-8")
+
     def close(self) -> None:
         pass
 
@@ -195,8 +207,23 @@ class ScriptedSurface:
         # it; replay never does because its first step navigates).
         return "about:blank" if self.path == "about:blank" else f"{self.base_url}{self.path}"
 
+    # --- Milestone 8: SIMULATION of a human acting in the browser (unit tests only) -----------
+
+    def simulate_human_confirm(self) -> None:
+        """What the page looks like after a *human* clicked "Confirm transfer" — a state change
+        underneath the contract, never an ``act()``. Simulation for state-machine tests only; it
+        does not count as the official headed E08/E09 proof."""
+        self.path = TRANSFER_COMPLETE_PATH
+        self.pages[TRANSFER_COMPLETE_PATH] = fixture_text("H_transfer_complete")
+        self.reviewing = False
+        self.typed = {}
+        self._refs_valid = False
+
     def _click(self, element: SurfaceElement) -> None:
         if not self.click_navigates:
+            return
+        if element.role == "button" and element.accessible_name == "Review transfer":
+            self.reviewing = True  # the Legacy Bank renders the review page at the same URL
             return
         if element.role == "button" and element.accessible_name == "Search":
             member_id = self.typed.get("Member ID", "")
@@ -212,6 +239,8 @@ class ScriptedSurface:
             return ""  # a blank page has no accessibility tree
         if self.path == "/members/search" and self.not_found_for is not None:
             return fixture_text("F_not_found").replace("M404", self.not_found_for)
+        if self.path == TRANSFER_PATH and self.reviewing:
+            return fixture_text("E_transfer_review")
         try:
             return self.pages[self.path]
         except KeyError:

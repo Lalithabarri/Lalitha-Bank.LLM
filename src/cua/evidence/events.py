@@ -45,16 +45,17 @@ every earlier version stays readable under its own number.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from cua.domain import DomainModel
 
-EVIDENCE_SCHEMA_VERSION = "1.1"
-SUPPORTED_SCHEMA_VERSIONS: tuple[str, ...] = ("1.0", "1.1")
+EVIDENCE_SCHEMA_VERSION = "1.2"
+SUPPORTED_SCHEMA_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2")
 
 
 class RunKind(StrEnum):
@@ -76,6 +77,11 @@ class EventType(StrEnum):
     OBSERVATION = "OBSERVATION"
     MODEL_CALL = "MODEL_CALL"
     DISCOVERY_ENDED = "DISCOVERY_ENDED"
+    # 1.2 — human intervention (Milestone 8)
+    INTERVENTION_REQUESTED = "INTERVENTION_REQUESTED"
+    CONTROL_TRANSFERRED = "CONTROL_TRANSFERRED"
+    HAND_BACK = "HAND_BACK"
+    INTERVENTION_VERIFIED = "INTERVENTION_VERIFIED"
 
 
 class Severity(StrEnum):
@@ -145,6 +151,7 @@ class FailureSummary(DomainModel):
     observed: ObservationSummary | None = None
     candidates: list[TargetSummary] = []
     deny_reason: str | None = None
+    safe_to_retry: bool | None = None  # 1.2: False after an irreversible step of unknown state
 
 
 class StepSummary(DomainModel):
@@ -157,6 +164,7 @@ class StepSummary(DomainModel):
     gate_decision: str | None = None
     effective_risk: str | None = None
     dispatched: bool
+    completed_by: str | None = None  # 1.2: "HUMAN" when a person completed the step
 
 
 # --- payloads --------------------------------------------------------------------------------
@@ -379,6 +387,81 @@ class DiscoveryEndedPayload(DomainModel):
     trace: TraceSummary
 
 
+# --- 1.2: human intervention -----------------------------------------------------------------
+
+_RELATIVE_PATH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+
+
+class ArtifactRef(DomainModel):
+    """A safe reference to a binary evidence artifact stored beside ``events.jsonl``.
+
+    Only a run-relative path, a digest, the media type and the size: never bytes, never an
+    absolute filesystem path, never a browser object.
+    """
+
+    path: str  # relative to the run directory, e.g. "artifacts/intervention_<id>_pre.png"
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    media_type: str
+    size_bytes: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def _relative(cls, value: str) -> str:
+        if not _RELATIVE_PATH.match(value) or ".." in value.split("/"):
+            raise ValueError(f"artifact path must be a safe run-relative path, got {value!r}")
+        return value
+
+
+class InterventionRequestedPayload(DomainModel):
+    """Mirror of ``cua.hitl.InterventionRequest`` plus the PRE evidence taken before any human
+    control was granted (evidence never imports hitl)."""
+
+    kind: Literal[EventType.INTERVENTION_REQUESTED] = EventType.INTERVENTION_REQUESTED
+    request_id: str
+    reason: str
+    risk: str
+    requested_action_summary: str
+    target: TargetSummary | None = None
+    verification_requirement: str
+    owner_before: str
+    owner_after: str
+    pre_observation_digest: str
+    pre_screenshot: ArtifactRef | None = None
+
+
+class ControlTransferredPayload(DomainModel):
+    kind: Literal[EventType.CONTROL_TRANSFERRED] = EventType.CONTROL_TRANSFERRED
+    request_id: str
+    from_owner: str
+    to_owner: str
+    trigger: str  # escalate | accept | hand_back | restore
+
+
+class HandBackPayload(DomainModel):
+    kind: Literal[EventType.HAND_BACK] = EventType.HAND_BACK
+    request_id: str
+    hand_back: str  # DONE | ABORT — a signal to verify, never a claim about the transaction
+    note: str = ""  # redacted before persistence
+
+
+class InterventionVerifiedPayload(DomainModel):
+    """The human-action record (ARCHITECTURE §9): what deterministic verification established
+    about the state the human left behind, with the pre/post digests and captures. The
+    run/session/artifact/step identity is the envelope's."""
+
+    kind: Literal[EventType.INTERVENTION_VERIFIED] = EventType.INTERVENTION_VERIFIED
+    request_id: str
+    hand_back: str
+    outcome: str  # VERIFIED_COMPLETED | UNKNOWN_COMMIT_STATE
+    completed_by: str | None = None  # "HUMAN" when VERIFIED_COMPLETED
+    observations: int  # observations taken by the bounded verification
+    pre_observation_digest: str
+    post_observation_digest: str
+    pre_screenshot: ArtifactRef | None = None
+    post_screenshot: ArtifactRef | None = None
+    evidence_note: str | None = None  # e.g. a post-capture failure, when it could be recorded
+
+
 Payload = Annotated[
     RunStartedPayload
     | GateDecisionPayload
@@ -390,7 +473,11 @@ Payload = Annotated[
     | DiscoveryStartedPayload
     | ObservationPayload
     | ModelCallPayload
-    | DiscoveryEndedPayload,
+    | DiscoveryEndedPayload
+    | InterventionRequestedPayload
+    | ControlTransferredPayload
+    | HandBackPayload
+    | InterventionVerifiedPayload,
     Field(discriminator="kind"),
 ]
 
@@ -418,6 +505,11 @@ PAYLOAD_MODELS: tuple[type[DomainModel], ...] = (
     TraceSummary,
     StopDetailSummary,
     DiscoveryEndedPayload,
+    ArtifactRef,
+    InterventionRequestedPayload,
+    ControlTransferredPayload,
+    HandBackPayload,
+    InterventionVerifiedPayload,
 )
 
 
@@ -425,7 +517,7 @@ PAYLOAD_MODELS: tuple[type[DomainModel], ...] = (
 
 
 class EvidenceEvent(DomainModel):
-    schema_version: Literal["1.0", "1.1"] = EVIDENCE_SCHEMA_VERSION
+    schema_version: Literal["1.0", "1.1", "1.2"] = EVIDENCE_SCHEMA_VERSION
     event_id: str
     seq: int = Field(ge=1)  # strictly increasing within a run: the chronology key
     ts: datetime  # wall-clock UTC; the replay Clock is monotonic and never used here

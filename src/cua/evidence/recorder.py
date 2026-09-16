@@ -40,13 +40,18 @@ from cua.evidence.events import (
     ActionCompletedPayload,
     ActionDispatchedPayload,
     ActionFailedPayload,
+    ArtifactRef,
     BusinessOutcomePayload,
+    ControlTransferredPayload,
     DiscoveryEndedPayload,
     DiscoveryStartedPayload,
     EventType,
     EvidenceError,
     EvidenceEvent,
     GateDecisionPayload,
+    HandBackPayload,
+    InterventionRequestedPayload,
+    InterventionVerifiedPayload,
     ModelCallPayload,
     ObservationPayload,
     RunKind,
@@ -56,7 +61,7 @@ from cua.evidence.events import (
     TargetSummary,
 )
 from cua.evidence.redaction import Redactor
-from cua.evidence.writer import EvidenceSink
+from cua.evidence.writer import ArtifactSink, EvidenceSink
 from cua.policy import GateDecision, GateRequest, GateResult
 from cua.surface.contract import ActResult, DispatchRecord, SurfaceDriverError
 
@@ -112,6 +117,15 @@ class EvidenceRecorder:
     def dispatch_count(self) -> int:
         """``ACTION_DISPATCHED`` events persisted for the active run."""
         return self._run.dispatch_count if self._run else 0
+
+    @property
+    def artifact_id(self) -> str | None:
+        return self._run.artifact_id if self._run else None
+
+    def wall_clock(self) -> datetime:
+        """The recorder's wall clock (injected in tests), for timestamps that must agree with
+        the evidence chronology."""
+        return self._wall_clock()
 
     @property
     def evidence_failed(self) -> bool:
@@ -198,6 +212,40 @@ class EvidenceRecorder:
         if payload.validation is not None and payload.validation.status != "VALID":
             severity = Severity.WARNING
         self._emit(EventType.MODEL_CALL, severity, payload)
+
+    # --- 1.2: human intervention (payloads are built by the engine) ------------------------------
+
+    def intervention_requested(self, payload: InterventionRequestedPayload) -> None:
+        self._emit(EventType.INTERVENTION_REQUESTED, Severity.WARNING, payload)
+
+    def control_transferred(self, payload: ControlTransferredPayload) -> None:
+        self._emit(EventType.CONTROL_TRANSFERRED, Severity.INFO, payload)
+
+    def hand_back(self, payload: HandBackPayload) -> None:
+        self._emit(EventType.HAND_BACK, Severity.INFO, payload)
+
+    def intervention_verified(self, payload: InterventionVerifiedPayload) -> None:
+        severity = Severity.INFO if payload.outcome == "VERIFIED_COMPLETED" else Severity.ERROR
+        self._emit(EventType.INTERVENTION_VERIFIED, severity, payload)
+
+    def store_artifact(self, name: str, data: bytes, media_type: str) -> ArtifactRef:
+        """Store a binary evidence artifact for the active run through the sink. Same failure
+        discipline as events: refused after the run's evidence has failed, and a sink failure
+        marks the run's evidence failed (no recursion, nothing further written)."""
+        run = self._run
+        if run is None:
+            raise EvidenceError(f"artifact {name} outside a recorded run")
+        if run.failure is not None:
+            raise EvidenceError(f"evidence for run {run.run_id} already failed; refusing {name}")
+        if not isinstance(run.sink, ArtifactSink):
+            exc = EvidenceError(f"evidence sink cannot store artifacts; refusing {name}")
+            run.failure = exc
+            raise exc
+        try:
+            return run.sink.write_artifact(name, data, media_type)
+        except EvidenceError as exc:
+            run.failure = exc
+            raise
 
     def discovery_ended(self, payload: DiscoveryEndedPayload) -> None:
         """Terminal event for every discovery stop reason; closes the run's sink."""

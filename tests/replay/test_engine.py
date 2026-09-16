@@ -268,7 +268,14 @@ def test_unexpected_exceptions_propagate_and_are_never_relabelled(exc):
 
 def test_replay_deps_has_no_slot_for_a_model():
     fields = set(ReplayDeps.__dataclass_fields__)
-    assert fields == {"surface", "action_gate", "clock", "evidence"}
+    assert fields == {
+        "surface",
+        "action_gate",
+        "clock",
+        "evidence",
+        "control_owner",
+        "intervention",
+    }
     assert not any(k in name for name in fields for k in ("llm", "model", "gemini", "client"))
 
 

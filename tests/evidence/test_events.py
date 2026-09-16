@@ -51,18 +51,21 @@ def test_round_trips_through_json_and_the_payload_type_is_recovered():
     assert back == original
     assert isinstance(back.payload, ActionCompletedPayload)
     # Milestone 6 bumped the vocabulary to 1.1 (RunKind.DISCOVERY + four discovery events).
-    assert back.schema_version == EVIDENCE_SCHEMA_VERSION == "1.1"
+    assert back.schema_version == EVIDENCE_SCHEMA_VERSION == "1.2"
     assert '"ts":"2026-09-15T12:00:00Z"' in line
 
 
 def test_every_earlier_schema_version_stays_readable():
-    """A 1.0 line (Milestone 5 sample evidence) validates under its own version number."""
-    assert SUPPORTED_SCHEMA_VERSIONS == ("1.0", "1.1")
-    line = event().model_dump_json().replace('"schema_version":"1.1"', '"schema_version":"1.0"')
-    back = EvidenceEvent.model_validate_json(line)
-    assert back.schema_version == "1.0"
+    """A 1.0 line (Milestone 5 samples) and a 1.1 line (the official E01) validate under their
+    own version numbers."""
+    assert SUPPORTED_SCHEMA_VERSIONS == ("1.0", "1.1", "1.2")
+    current = event().model_dump_json()
+    for earlier in ("1.0", "1.1"):
+        line = current.replace('"schema_version":"1.2"', f'"schema_version":"{earlier}"')
+        back = EvidenceEvent.model_validate_json(line)
+        assert back.schema_version == earlier
     with pytest.raises(ValidationError):
-        EvidenceEvent.model_validate_json(line.replace('"1.0"', '"9.9"'))
+        EvidenceEvent.model_validate_json(current.replace('"1.2"', '"9.9"'))
 
 
 def test_payload_kind_must_match_event_type():

@@ -1,6 +1,6 @@
 # REPORT
 
-> **Status: skeleton (Milestone 7 frozen).** Every statement below is backed by committed code,
+> **Status: skeleton (Milestone 8 frozen).** Every statement below is backed by committed code,
 > tests or evidence on `main`. Sections marked **[NOT YET IMPLEMENTED]** or **[TODO]** describe
 > work that has not happened; nothing in them is claimed. Target length when complete: 1–3 pages.
 
@@ -131,18 +131,34 @@ self-healing replay (D20, D21).
 
 ## Escalation & handoff
 
-**Full same-session HITL is not yet implemented.** What exists: `ControlOwner` with the four states
-(`AUTOMATION | PENDING_HUMAN | HUMAN | RETURNING`); `ActionGate` denies every automated action while
-the owner is not `AUTOMATION` (`CONTROL_NOT_OWNED`, tested for all three states, in replay and
-discovery); `IRREVERSIBLE` actions (the "Confirm transfer" click) always answer
-`REQUIRE_INTERVENTION` and are never dispatched — in V1 both replay and discovery stop safely
-(`INTERVENTION_REQUIRED` / `BLOCKED_BY_POLICY`) rather than suspend. `DENY` is never converted into a
-request for approval. The wrapper-generated `session_id` names one browser session and is single-use,
-which is the mechanism the same-session proof will rest on.
-
-**[NOT YET IMPLEMENTED]** pause → cede → human acts in the same live browser → explicit hand-back →
-re-observe and verify → never repeat a completed irreversible action → resume/terminate;
-`InterventionRequest` / `HumanActionRecord` evidence; E08/E09.
+Implemented and verified live (M8, official run `evidence/replay/run_af80d82668bc`, headed
+Chromium, real Legacy Bank, `transfer_funds@1.0.0`, no model). One `ControlOwner` object is shared
+by the engine and `ActionGate` (identity asserted at run start) with exactly four edges:
+`AUTOMATION → PENDING_HUMAN → HUMAN → RETURNING → AUTOMATION`; there is no HUMAN → AUTOMATION
+shortcut. When the gate answers `REQUIRE_INTERVENTION` for the IRREVERSIBLE "Confirm transfer"
+click (zero driver dispatch), the engine suspends *inside the same run*: it takes PRE evidence
+(observation digest + PNG screenshot) while automation still owns control, records a typed
+`InterventionRequest` (identity, step, risk, the requested action, the verification requirement —
+no ref, selector, credential or model text), relinquishes ownership, and hands the request to an
+`InterventionHandler` that receives nothing else — no surface, gate, page or engine — so it
+physically cannot perform the action. The V1 handler is the terminal: the human clicks Confirm in
+the **same visible browser, context, page and `session_id`** (never closed or recreated) and types
+`done` or `abort`. Both mean "re-observe and verify": HUMAN → RETURNING, a fresh bounded
+observation evaluates the step's own postcondition (`status` "The transfer has been posted."), POST
+evidence is captured from the observation the verdict was made on, and `INTERVENTION_VERIFIED`
+records outcome, `completed_by`, pre/post digests and screenshot references (relative path,
+sha256, media type — bytes never enter the JSONL). Only `VERIFIED_COMPLETED` + `done` restores
+AUTOMATION, marks the step `completed_by=HUMAN` and advances **past** it: the official chronology
+shows `ACTION_DISPATCHED` for s1, s2, s3 and s5 only, then `RUN_COMPLETED / SUCCESS` with
+`transfer_reference = TXN-000001` (E08 same session, E09 no repeat, one run id, one session id,
+22 contiguous redacted 1.2 events). `VERIFIED_COMPLETED` + `abort` ends the run
+`FAILURE / INTERVENTION_ABANDONED` (committed, not resumed). When completion cannot be proven —
+remaining on the review page proves nothing — the result is `FAILURE / UNKNOWN_COMMIT_STATE`,
+`safe_to_retry=false`, the owner stays RETURNING, nothing is ever retried; evidence that fails
+after the human may have acted is never a reason to repeat anything (PRE evidence failure fails
+closed before any ownership is granted). `DENY` is never converted into a request for approval.
+Deferred: a positive "not committed" verdict (the review page carries no signal), multiple
+interventions per run, a non-terminal operator interface.
 
 ## Safety
 
@@ -172,8 +188,9 @@ read-path exfiltration is not policed; pixel content is not redacted (no screens
 
 ## Cuts
 
-Deliberate, at clean seams: no same-session HITL transitions yet (next); no CLI/`CapabilityRunner` (runs are driven from tests and `tests/evals`); no
-screenshots; no reviewer console; no `WAIT` action; no automatic re-dispatch retries; no
+Deliberate, at clean seams: no CLI/`CapabilityRunner` (runs are driven from tests and
+`tests/evals`); screenshots only as intervention evidence (no OCR, no model vision, no general
+capture); no reviewer console; no `WAIT` action; no automatic re-dispatch retries; no
 self-healing replay (refused, D21); no Gemini/Anthropic adapters (D24 keeps the seam); no tenant
 overlays or desktop surface (designed only); no queues, DB, auth, telemetry. Compiler limits, by
 design: the checkpoint carries only what the trace justifies (route, not heading — see Artifact

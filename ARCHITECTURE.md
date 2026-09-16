@@ -394,3 +394,17 @@ by replay; trace-learned outcomes remain a later extension through `OutcomeCandi
 postconditions and the success checkpoint only from recorded routes and bindings — a route-only checkpoint
 is emitted when the trace records no heading text, never a stronger invented condition. Generated artifacts
 live in a separate store root `capabilities/generated/` beside `compile_reports/`. Decision D25.
+
+**A3 (Milestone 8, 2026-09-16) — same-session HITL as implemented.** §7 `ReplayDeps` gains the shared
+`control_owner` (the very object the gate reads; identity asserted at run start) and an optional
+`intervention: InterventionHandler` whose contract is `intervene(request) -> HandBack` — the handler
+receives only the `InterventionRequest`, never the surface. §9's `done`/`verified` edges are `hand_back`
+(HUMAN → RETURNING, on `done` *or* `abort`) and `restore` (RETURNING → AUTOMATION, only after the step's
+own postcondition held on a fresh observation); `INTERVENTION_DECLINED` is realised as
+`FAILURE / INTERVENTION_ABANDONED` (verified as committed, not resumed) and `UNKNOWN_COMMIT_STATE` as
+`FAILURE / UNKNOWN_COMMIT_STATE` with `safe_to_retry=false`. `HumanActionRecord` is the
+`INTERVENTION_VERIFIED` evidence event (pre/post observation digests and PNG screenshot references);
+intervention events are part of the run's own `events.jsonl` rather than a separate `interventions/`
+directory (§10 layout). Screenshots (§10 "failure + HITL pre/post only") arrive through the additive
+`ScreenshotCapable` surface capability and the evidence sink's `write_artifact`, evidence only, never a
+decision input. Decision D26.

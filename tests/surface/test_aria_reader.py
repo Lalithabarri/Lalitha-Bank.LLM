@@ -26,6 +26,7 @@ EXPECTED_FIXTURES = {
     "E_transfer_review",
     "F_not_found",
     "G_detail_M1001_ambiguous",
+    "H_transfer_complete",  # Milestone 8: the post-confirm page
 }
 
 
@@ -138,3 +139,25 @@ def test_escaped_quotes_and_attributes_parse():
     assert node.attrs == {"disabled": None, "ref": "e9"}
     assert node.text == "note"
     assert node.ref == "e9"
+
+
+def test_quoted_yaml_scalars_are_unquoted_but_content_is_never_altered():
+    """Playwright quotes trailing text only when YAML would misread it (e.g. a number-like
+    textbox value). The quotes are serialisation: ``"500.00"`` is the value ``500.00``. Found
+    by the first live HITL run (M8): ``value_equals`` compared against the quoted form."""
+    elements, outline = read_snapshot(
+        "- generic [ref=e1]:\n"
+        '  - textbox "Amount" [active] [ref=e2]: "500.00"\n'
+        '  - textbox "Member ID" [ref=e3]: M1001\n'
+        '  - textbox "Note" [ref=e4]: say "hi" to "them"\n'
+        '  - textbox "Quote" [ref=e5]: "a \\"quoted\\" value"\n'
+        "  - alert [ref=e6]: No member found for M404.\n"
+        '  - text: "42"\n'
+    )
+    values = {e.accessible_name: e.value for e in elements}
+    assert values["Amount"] == "500.00"
+    assert values["Member ID"] == "M1001"
+    assert values["Note"] == 'say "hi" to "them"'  # not a fully quoted scalar: verbatim
+    assert values["Quote"] == 'a "quoted" value'
+    assert [e.value for e in elements if e.role == "alert"] == ["No member found for M404."]
+    assert "42" in outline and '"42"' not in outline

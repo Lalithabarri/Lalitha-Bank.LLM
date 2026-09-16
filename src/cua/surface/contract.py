@@ -27,7 +27,7 @@ attempted; if a later notification raises, the exception propagates as-is (the a
 ``DispatchRecord`` carries no ref — refs never leave the snapshot they came from.
 """
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from cua.domain import ActionType, DomainModel, SurfaceSnapshot
 
@@ -128,3 +128,15 @@ class Surface(Protocol):
         ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class ScreenshotCapable(Protocol):
+    """Optional, additive capability: a pixel capture of the current page as PNG bytes.
+
+    Evidence only (Milestone 8 intervention pre/post captures). Never a source of decisions —
+    the deterministic observation is. Checked with ``isinstance`` at composition; a surface that
+    lacks it cannot be used for interventions.
+    """
+
+    def capture_screenshot(self) -> bytes: ...

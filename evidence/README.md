@@ -95,4 +95,21 @@ tests/evals/test_e02_compile_replay.py -m browser -k m1002`; the 20-item E02 aud
 `E02 REPORT` and re-run from disk by the same test. The declared `MEMBER_NOT_FOUND` outcome is
 verified on the generated artifact by the sibling `M404` test in that file.
 
-Intervention runs will sit beside these under `interventions/` once the HITL milestone lands.
+## Same-session human intervention — official E08/E09 (Milestone 8, headed Chromium, no model)
+
+| run | scenario | events | dispatched | terminal |
+|---|---|---|---|---|
+| `replay/run_af80d82668bc` | `transfer_funds@1.0.0` for a valid member; the IRREVERSIBLE "Confirm transfer" click stops automation (`GATE_DECISION REQUIRE_INTERVENTION`), the human clicks it in the same visible browser and types `done`, the engine verifies the posted-transfer state and continues | 22 | 4 (s1, s2, s3, s5 — never s4) | `RUN_COMPLETED` · `SUCCESS` · `transfer_reference = TXN-000001` |
+
+Intervention events live in the run's own `events.jsonl` (one run id, one session id):
+`INTERVENTION_REQUESTED` (PRE observation digest + screenshot reference) → `CONTROL_TRANSFERRED`
+AUTOMATION→PENDING_HUMAN→HUMAN → `HAND_BACK` (`DONE`) → `CONTROL_TRANSFERRED` HUMAN→RETURNING →
+`INTERVENTION_VERIFIED` (`VERIFIED_COMPLETED`, `completed_by: HUMAN`, post digest + screenshot
+reference) → `CONTROL_TRANSFERRED` RETURNING→AUTOMATION → s5. Screenshots are the only binary
+artifacts: `artifacts/intervention_<request_id>_{pre,post}.png`, referenced from the events by
+run-relative path, sha256 and media type (never bytes, never absolute paths). Runtime inputs
+persist as `<input:member_id>` / `<input:amount>`. Produced by
+`CUA_LIVE_HITL=1 uv run python -m tests.evals.e08_hitl_live --live --evidence-root evidence`;
+`tests/evals/test_e08_evidence.py` re-runs the 20-item audit on these files.
+
+There is no separate `interventions/` directory: an intervention is part of the run it interrupted.

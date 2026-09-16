@@ -92,6 +92,7 @@ def terminal_payload(result: RunResult, *, dispatched_actions: int) -> RunTermin
                     for c in failure.candidates
                 ],
                 deny_reason=failure.deny_reason.value if failure.deny_reason else None,
+                safe_to_retry=failure.safe_to_retry,
             )
             if failure
             else None
@@ -107,6 +108,7 @@ def terminal_payload(result: RunResult, *, dispatched_actions: int) -> RunTermin
                 gate_decision=step.gate_decision.value if step.gate_decision else None,
                 effective_risk=step.effective_risk.value if step.effective_risk else None,
                 dispatched=step.dispatched,
+                completed_by=step.completed_by.value if step.completed_by else None,
             )
             for index, step in enumerate(result.steps, start=1)
         ],

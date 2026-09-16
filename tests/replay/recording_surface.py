@@ -13,6 +13,7 @@ class RecordingSurface:
         self._inner = inner
         self.acts: list[SurfaceAction] = []
         self.observes = 0
+        self.screenshots = 0
 
     @property
     def session_id(self) -> str:
@@ -28,6 +29,11 @@ class RecordingSurface:
 
     def close(self) -> None:
         self._inner.close()
+
+    def capture_screenshot(self) -> bytes:
+        """Forwarded only if the inner surface has the capability (never impersonated)."""
+        self.screenshots += 1
+        return self._inner.capture_screenshot()  # type: ignore[attr-defined]
 
     @property
     def act_types(self) -> list[str]:

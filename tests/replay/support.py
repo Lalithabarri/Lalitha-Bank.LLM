@@ -72,16 +72,27 @@ def engine_for(
     policy: PolicyConfig | None = None,
     owner: ControlOwner | None = None,
     recorder: EvidenceRecorder | None = None,
+    intervention=None,
     **config_overrides,
 ) -> ReplayEngine:
-    """The production composition: the gate observes into the same recorder the engine holds.
+    """The production composition: the gate observes into the same recorder the engine holds,
+    and the gate and the engine share ONE ``ControlOwner`` (Milestone 8, A1).
 
     The *surface* must be wired to that recorder too (``listener=recorder``); the engine's
     dispatch-count invariant fails loudly otherwise.
     """
     recorder = recorder or recorder_for()
-    gate = ActionGate(policy or policy_for(base_url), owner or ControlOwner(), observer=recorder)
+    owner = owner or ControlOwner()
+    gate = ActionGate(policy or policy_for(base_url), owner, observer=recorder)
     config = ReplayConfig(base_url=base_url, **config_overrides)
     return ReplayEngine(
-        ReplayDeps(surface=surface, action_gate=gate, clock=clock, evidence=recorder), config
+        ReplayDeps(
+            surface=surface,
+            action_gate=gate,
+            clock=clock,
+            evidence=recorder,
+            control_owner=owner,
+            intervention=intervention,
+        ),
+        config,
     )

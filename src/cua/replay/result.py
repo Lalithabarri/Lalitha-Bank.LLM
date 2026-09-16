@@ -43,10 +43,17 @@ class FailureCode(StrEnum):
     AMBIGUOUS_TARGET = "AMBIGUOUS_TARGET"
     TARGET_NOT_FOUND = "TARGET_NOT_FOUND"
     POLICY_DENIED = "POLICY_DENIED"
-    # The gate answered REQUIRE_INTERVENTION and the engine cannot yet suspend for a human
-    # (HITL transitions arrive at ARCHITECTURE §15 step 16). Never conflated with POLICY_DENIED:
-    # a hard DENY is not a request for approval, and vice versa.
+    # The gate answered REQUIRE_INTERVENTION and no intervention handler is configured, so the
+    # engine cannot hand over to a human. Never conflated with POLICY_DENIED: a hard DENY is not
+    # a request for approval, and vice versa.
     INTERVENTION_REQUIRED = "INTERVENTION_REQUIRED"
+    # Milestone 8 (ARCHITECTURE §7/§9, D17): after a human hand-back the fresh observation did
+    # not establish the irreversible step's postcondition — whether the operation committed is
+    # unknown. ``safe_to_retry`` is False; nothing is ever repeated automatically.
+    UNKNOWN_COMMIT_STATE = "UNKNOWN_COMMIT_STATE"
+    # The human's irreversible action WAS verified as committed, but the operator asked (abort)
+    # that automation not continue. Not a cancellation of the operation.
+    INTERVENTION_ABANDONED = "INTERVENTION_ABANDONED"
     POSTCONDITION_FAILED = "POSTCONDITION_FAILED"
     INVALID_INPUT = "INVALID_INPUT"
     TRANSFORM_ERROR = "TRANSFORM_ERROR"
@@ -55,6 +62,11 @@ class FailureCode(StrEnum):
     # domain: never SURFACE_ERROR, never POLICY_DENIED. A run without its proof is not a success;
     # the message says which event failed and whether a driver action had already been attempted.
     EVIDENCE_ERROR = "EVIDENCE_ERROR"
+
+
+class CompletedBy(StrEnum):
+    AUTOMATION = "AUTOMATION"
+    HUMAN = "HUMAN"
 
 
 class StepStatus(StrEnum):
@@ -93,6 +105,9 @@ class FailureDetail(DomainModel):
     observed: SnapshotSummary | None = None
     candidates: list[ResolvedTarget] = []  # AMBIGUOUS_TARGET only
     deny_reason: DenyReason | None = None  # POLICY_DENIED only
+    # False when an irreversible action may have happened and must not be repeated
+    # (UNKNOWN_COMMIT_STATE, INTERVENTION_ABANDONED, post-human EVIDENCE_ERROR); None: unstated.
+    safe_to_retry: bool | None = None
 
 
 class OutcomeDetail(DomainModel):
@@ -110,6 +125,7 @@ class StepRecord(DomainModel):
     gate_decision: GateDecision | None = None
     effective_risk: RiskTier | None = None
     dispatched: bool = False
+    completed_by: CompletedBy | None = None  # HUMAN: verified human completion, never dispatched
 
 
 class RunResult(DomainModel):

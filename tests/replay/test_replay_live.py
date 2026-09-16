@@ -20,10 +20,11 @@ from pathlib import Path
 
 import pytest
 
+from cua.artifact import ArtifactStore
 from cua.domain import ActionType
 from cua.evidence import EventType, EvidenceRecorder, EvidenceStore, RunKind
-from cua.policy import DenyReason, PolicyConfig
-from cua.replay import FailureCode, MonotonicClock, StepStatus, TerminalStatus
+from cua.policy import DenyReason, GateDecision, PolicyConfig, RiskTier
+from cua.replay import CompletedBy, FailureCode, MonotonicClock, StepStatus, TerminalStatus
 from tests.replay.recording_surface import RecordingSurface
 from tests.replay.support import ALL_ACTIONS, engine_for, flagship, policy_for
 
@@ -257,3 +258,38 @@ def test_zero_model_live_replay_in_a_fresh_interpreter():
     assert report["forbidden_loaded"] == [] and report["forbidden_attempted"] == []
     assert report["success_is_decimal"] is True
     assert report["events_written"] == 14 and report["member_in_evidence"] is False
+
+
+# --- Milestone 8: the transfer capability reaches the irreversible step in a real browser --------
+
+
+def test_transfer_reaches_confirm_and_the_gate_requires_intervention_with_zero_dispatch(
+    surface, live_bank, evidence_recorder, evidence_store
+):
+    """s1–s3 of ``transfer_funds@1.0.0`` against the real UI (number-like amount value, review
+    page rendered at the same URL), then s4: the committed IRREVERSIBLE rule stops automation
+    before any driver call. No handler here — the handoff itself is the manual E08/E09."""
+    artifact = ArtifactStore(ROOT / "capabilities").load_id("transfer_funds@1.0.0")
+    recording = RecordingSurface(surface)
+    engine = engine_for(
+        recording, MonotonicClock(), base_url=live_bank.base_url, recorder=evidence_recorder
+    )
+    result = engine.run(artifact, {"member_id": "M1001", "amount": "500.00"})
+    assert result.status is TerminalStatus.FAILURE
+    assert result.failure.code is FailureCode.INTERVENTION_REQUIRED
+    assert result.failure.step_id == "s4_confirm"
+    assert recording.act_types == ["NAVIGATE", "FILL", "CLICK"]
+    assert [s.status for s in result.steps[:3]] == [StepStatus.COMPLETED] * 3
+    s4 = result.steps[3]
+    assert s4.gate_decision is GateDecision.REQUIRE_INTERVENTION
+    assert s4.effective_risk is RiskTier.IRREVERSIBLE
+    assert not s4.dispatched and s4.completed_by is not CompletedBy.HUMAN
+    events = events_for(evidence_store, result)
+    assert [e.step_id for e in events if e.event_type is EventType.ACTION_DISPATCHED] == [
+        "s1_open_transfer",
+        "s2_enter_amount",
+        "s3_review",
+    ]
+    assert surface.dispatched_actions == 3
+    raw = evidence_store.events_path(RunKind.REPLAY, result.run_id).read_text()
+    assert "M1001" not in raw and "500.00" not in raw

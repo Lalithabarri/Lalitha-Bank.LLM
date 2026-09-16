@@ -66,7 +66,7 @@ def test_successful_discovery_leaves_a_coherent_chronology():
     assert [e.seq for e in events] == list(range(1, len(events) + 1))
     assert {e.run_kind for e in events} == {RunKind.DISCOVERY}
     assert {e.session_id for e in events} == {"sess_scripted"}
-    assert {e.schema_version for e in events} == {"1.1"}
+    assert {e.schema_version for e in events} == {"1.2"}  # 1.1 lines stay readable (M6 E01)
     assert all(e.artifact_id is None for e in events)
     # every event of step n is stamped d<n>
     for event in events[1:-1]:
